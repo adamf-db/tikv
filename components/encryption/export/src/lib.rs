@@ -27,7 +27,22 @@ pub fn data_key_manager_from_config(
     let args = DataKeyManagerArgs::from_encryption_config(dict_path, config);
     let previous_master_key_conf = config.previous_master_key.clone();
     let previous_master_key = Box::new(move || create_backend(&previous_master_key_conf));
-    DataKeyManager::new(master_key, previous_master_key, args)
+
+    for keyspace_config in &config.keyspace_keys {
+        let keyspace_key = create_backend(&keyspace_config.key_config).map_err(|e| {
+            error!("failed to access master key, {}", e);
+            e
+        })?;
+        let previous_key_conf = keyspace_config.previous_key_config.clone();
+        let previous_key = Box::new(move || create_backend(&previous_key_conf));
+        let key_manager = DataKeyManager::new(
+            keyspace_key, previous_key,
+            keyspace_config.keyspace_id, args.clone());
+    }
+
+    // master_key will have a keyspace_id of 0.
+    DataKeyManager::new(master_key, previous_master_key, 0, args)
+
 }
 
 pub fn create_backend(config: &MasterKeyConfig) -> Result<Box<dyn Backend>> {

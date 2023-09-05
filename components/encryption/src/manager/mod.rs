@@ -454,9 +454,10 @@ pub struct DataKeyManager {
     method: EncryptionMethod,
     rotate_tx: channel::Sender<RotateTask>,
     background_worker: Option<JoinHandle<()>>,
+    keyspace_id: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DataKeyManagerArgs {
     pub method: EncryptionMethod,
     pub rotation_period: Duration,
@@ -493,13 +494,15 @@ impl DataKeyManager {
         master_key: Box<dyn Backend>,
         previous_master_key: Box<dyn Backend>,
         args: DataKeyManagerArgs,
+        keyspace_id: u32,
     ) -> Result<Option<DataKeyManager>> {
-        Self::new(master_key, Box::new(move || Ok(previous_master_key)), args)
+        Self::new(master_key, Box::new(move || Ok(previous_master_key)), keyspace_id, args)
     }
 
     pub fn new(
         master_key: Box<dyn Backend>,
         previous_master_key: Box<dyn FnOnce() -> Result<Box<dyn Backend>>>,
+        keyspace_id: u32,
         args: DataKeyManagerArgs,
     ) -> Result<Option<DataKeyManager>> {
         let dicts = match Self::load_dicts(&*master_key, &args)? {
@@ -509,7 +512,7 @@ impl DataKeyManager {
                 Self::load_previous_dicts(&*master_key, &*(previous_master_key()?), &args, err)?
             }
         };
-        Ok(Some(Self::from_dicts(dicts, args.method, master_key)?))
+        Ok(Some(Self::from_dicts(dicts, args.method, master_key, keyspace_id)?))
     }
 
     /// Will block file operation for a considerable amount of time. Only used
@@ -616,6 +619,7 @@ impl DataKeyManager {
         dicts: Dicts,
         method: EncryptionMethod,
         master_key: Box<dyn Backend>,
+        keyspace_id: u32
     ) -> Result<DataKeyManager> {
         dicts.maybe_rotate_data_key(method, &*master_key)?;
         let dicts = Arc::new(dicts);
@@ -634,6 +638,7 @@ impl DataKeyManager {
             method,
             rotate_tx,
             background_worker: Some(background_worker),
+            keyspace_id: keyspace_id
         })
     }
 
@@ -898,6 +903,7 @@ impl EncryptionKeyManager for DataKeyManager {
             method: crypter::to_engine_encryption_method(file.method),
             iv: file.get_iv().to_owned(),
         };
+        info!("keyspace_id for new_file:"; "kId" => self.keyspace_id);
         Ok(encrypted_file)
     }
 
@@ -1149,10 +1155,13 @@ mod tests {
         if let Some(method) = method {
             args.method = method;
         }
+        let keyspace_id = 0; // TODO: test with other keyspaces if raftkv2 in use
         match DataKeyManager::new_previous_loaded(
             master_backend,
             Box::<MockBackend>::default(),
             args,
+            keyspace_id,
+
         ) {
             Ok(None) => panic!("expected encryption"),
             Ok(Some(dkm)) => Ok(dkm),
@@ -1222,7 +1231,7 @@ mod tests {
         let dkm = DataKeyManager::new(
             new_mock_backend(),
             Box::new(|| Ok(new_mock_backend())),
-            args,
+            0, args,
         )
         .unwrap();
         assert!(dkm.is_none());

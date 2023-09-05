@@ -32,6 +32,7 @@ pub fn new_file_security_config(dir: &Path) -> EncryptionConfig {
         file_dictionary_rewrite_threshold: 100000,
         master_key: master_key_cfg.clone(),
         previous_master_key: master_key_cfg,
+        keyspace_keys: Vec::new(),
     }
 }
 
@@ -47,6 +48,7 @@ pub fn new_test_key_manager(
     DataKeyManager::new(
         create_backend(&master_key)?,
         Box::new(move || create_backend(&previous_master_key)),
+        0,
         DataKeyManagerArgs {
             method: method.unwrap_or(EncryptionMethod::Aes256Ctr),
             rotation_period: Duration::from_secs(60),

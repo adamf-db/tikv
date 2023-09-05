@@ -125,6 +125,7 @@ fn test_serde_custom_tikv_config() {
         forward_max_connections_per_address: 5,
         reject_messages_on_memory_ratio: 0.8,
         simplify_metrics: false,
+        keyspace_auth_master_key: None,
     };
     value.readpool = ReadPoolConfig {
         unified: UnifiedReadPoolConfig {
@@ -789,6 +790,7 @@ fn test_serde_custom_tikv_config() {
                     path: "/master/key/path".to_owned(),
                 },
             },
+            keyspace_keys: Vec::new(),
             previous_master_key: MasterKeyConfig::Plaintext,
         },
     };

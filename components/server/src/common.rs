@@ -114,7 +114,7 @@ impl TikvServerCore {
 
         info!(
             "using config";
-            "config" => serde_json::to_string(&config).unwrap(),
+            "config" => serde_json::to_string_pretty(&config).unwrap(),
         );
         if config.panic_when_unexpected_key_or_data {
             info!("panic-when-unexpected-key-or-data is on");

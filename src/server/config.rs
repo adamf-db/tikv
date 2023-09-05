@@ -1,7 +1,7 @@
 // Copyright 2016 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::{cmp, i32, isize, sync::Arc, time::Duration};
-
+use uuid::Uuid;
 use collections::HashMap;
 use engine_traits::{perf_level_serde, PerfLevel};
 use grpcio::{CompressionAlgorithms, ResourceQuota};
@@ -80,6 +80,11 @@ pub struct Config {
     // If not set, the status server's listening address will be used.
     #[online_config(skip)]
     pub advertise_status_addr: String,
+
+
+    // Keyspace Auth Master Key
+    #[online_config(skip)]
+    pub keyspace_auth_master_key: Option<Uuid>,
 
     #[online_config(skip)]
     pub status_thread_pool_size: usize,
@@ -263,6 +268,7 @@ impl Default for Config {
             // Go tikv client uses 4 as well.
             forward_max_connections_per_address: 4,
             simplify_metrics: false,
+            keyspace_auth_master_key: None,
         }
     }
 }

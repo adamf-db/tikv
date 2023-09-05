@@ -6,6 +6,7 @@ use online_config::OnlineConfig;
 use serde_derive::{Deserialize, Serialize};
 use tikv_util::config::ReadableDuration;
 
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, OnlineConfig)]
 #[serde(default)]
 #[serde(rename_all = "kebab-case")]
@@ -21,6 +22,8 @@ pub struct EncryptionConfig {
     #[online_config(skip)]
     pub file_dictionary_rewrite_threshold: u64,
     #[online_config(skip)]
+    pub keyspace_keys: Vec<EncryptionKeyspaceConfig>,
+    #[online_config(skip)]
     pub master_key: MasterKeyConfig,
     #[online_config(skip)]
     pub previous_master_key: MasterKeyConfig,
@@ -34,11 +37,13 @@ impl Default for EncryptionConfig {
             // The option is available since TiKV 4.0.9.
             enable_file_dictionary_log: true,
             file_dictionary_rewrite_threshold: 1000000,
+            keyspace_keys: Vec::new(),
             master_key: MasterKeyConfig::default(),
             previous_master_key: MasterKeyConfig::default(),
         }
     }
 }
+
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -162,6 +167,24 @@ impl Default for MasterKeyConfig {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+#[serde(rename_all = "kebab-case")]
+pub struct EncryptionKeyspaceConfig {
+    pub keyspace_id: u32,
+    pub key_config: MasterKeyConfig,
+    pub previous_key_config: MasterKeyConfig,
+}
+
+impl Default for EncryptionKeyspaceConfig {
+    fn default() -> EncryptionKeyspaceConfig {
+        EncryptionKeyspaceConfig {
+            keyspace_id: 0,
+            key_config: MasterKeyConfig::Plaintext,
+            previous_key_config: MasterKeyConfig::Plaintext,
+        }
+    }
+}
 mod encryption_method_serde {
     use std::fmt;
 
@@ -229,8 +252,90 @@ mod encryption_method_serde {
 
 #[cfg(test)]
 mod tests {
+    use crate::MasterKeyConfig::File;
     use super::*;
 
+    #[test]
+    fn test_multiple_keys_config() {
+        let config = EncryptionConfig {
+            data_encryption_method: EncryptionMethod::Aes128Ctr,
+            data_key_rotation_period: ReadableDuration::days(14),
+            enable_file_dictionary_log: false,
+            master_key: MasterKeyConfig::Kms {
+                config: KmsConfig {
+                    key_id: "key_id".to_owned(),
+                    region: "region".to_owned(),
+                    endpoint: "endpoint".to_owned(),
+                    vendor: "".to_owned(),
+                    azure: None,
+                },
+            },
+            keyspace_keys: vec![
+                EncryptionKeyspaceConfig {
+                    key_config: MasterKeyConfig::File {
+                        config: FileConfig {
+                            path: "/tmp/key".to_owned()
+                        }
+                    },
+                    previous_key_config: MasterKeyConfig::File {
+                        config: FileConfig {
+                            path: "/tmp/key".to_owned()
+                        }
+                    },
+                    keyspace_id: 1,
+                },
+                EncryptionKeyspaceConfig {
+                    key_config: MasterKeyConfig::File {
+                        config: FileConfig {
+                            path: "/tmp/tikv/key1".to_owned()
+                        }
+                    },
+                    previous_key_config: MasterKeyConfig::File {
+                        config: FileConfig {
+                            path: "/tmp/key".to_owned()
+                        }
+                    },
+                    keyspace_id: 2,
+                },
+            ],
+            file_dictionary_rewrite_threshold: 0,
+            previous_master_key: Default::default(),
+        };
+        let kms_str = r#"
+            data-encryption-method = "aes128-ctr"
+            data-key-rotation-period = "14d"
+            enable-file-dictionary-log = true
+            file-dictionary-rewrite-threshold = 1000000
+            [previous-master-key]
+            type = "plaintext"
+            [master-key]
+            type = "kms"
+            key-id = "key_id"
+            region = "region"
+            endpoint = "endpoint"
+            [[keyspace-keys]]
+            keyspace-id = 1
+
+            [keyspace-keys.key-config]
+            type = 'file'
+            path = "/tmp/tikv/key"
+
+
+            [[keyspace-keys]]
+            keyspace-id = 2
+
+            [keyspace-keys.key-config]
+            type = 'file'
+            path = "/tmp/tikv/key2"
+        "#;
+        let cfg: EncryptionConfig = toml::from_str(kms_str).unwrap();
+        assert_eq!(
+            cfg,
+            config.clone(),
+            "\n{}\n",
+            toml::to_string_pretty(&config).unwrap()
+        );
+    }
     #[test]
     fn test_kms_config() {
         let kms_config = EncryptionConfig {
@@ -245,6 +350,7 @@ mod tests {
                     azure: None,
                 },
             },
+            keyspace_keys: Vec::new(),
             previous_master_key: MasterKeyConfig::Plaintext,
             enable_file_dictionary_log: true,
             file_dictionary_rewrite_threshold: 1000000,
