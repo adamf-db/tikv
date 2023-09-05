@@ -204,6 +204,11 @@ impl PersistenceListener {
     ///
     /// `smallest_seqno` should be the smallest seqno of the memtable.
     pub fn on_memtable_sealed(&self, cf: String, smallest_seqno: u64) {
+        (|| {
+            fail_point!("on_memtable_sealed", |t| {
+                assert_eq!(t.unwrap().as_str(), cf);
+            })
+        })();
         // The correctness relies on the assumption that there will be only one
         // thread writting to the DB and increasing apply index.
         // Apply index will be set within DB lock, so it's correct even with manual
@@ -229,7 +234,7 @@ impl PersistenceListener {
     ///
     /// `largest_seqno` should be the largest seqno of the generated file.
     pub fn on_flush_completed(&self, cf: &str, largest_seqno: u64, file_no: u64) {
-        fail_point!("on_flush_completed");
+        fail_point!("on_flush_completed", |_| {});
         // Maybe we should hook the compaction to avoid the file is compacted before
         // being recorded.
         let offset = data_cf_offset(cf);

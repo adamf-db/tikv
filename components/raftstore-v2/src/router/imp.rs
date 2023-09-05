@@ -11,7 +11,7 @@ use engine_traits::{KvEngine, RaftEngine};
 use futures::Future;
 use kvproto::{
     kvrpcpb::ExtraOp,
-    metapb::{Region, RegionEpoch},
+    metapb::{Peer, Region, RegionEpoch},
     pdpb,
     raft_cmdpb::{RaftCmdRequest, RaftCmdResponse},
     raft_serverpb::RaftMessage,
@@ -58,7 +58,7 @@ impl<EK: KvEngine, ER: RaftEngine> raftstore::coprocessor::StoreHandle for Store
         split_keys: Vec<Vec<u8>>,
         source: Cow<'static, str>,
     ) {
-        let (msg, _) = PeerMsg::request_split(region_epoch, split_keys, source.to_string());
+        let (msg, _) = PeerMsg::request_split(region_epoch, split_keys, source.to_string(), true);
         let res = self.send(region_id, msg);
         if let Err(e) = res {
             warn!(
@@ -313,6 +313,22 @@ impl<EK: KvEngine, ER: RaftEngine> UnsafeRecoveryHandle for UnsafeRecoveryRouter
             Err(crate::Error::RegionNotFound(_)) => Ok(()),
             res => res,
         }
+    }
+
+    fn send_demote_peers(
+        &self,
+        region_id: u64,
+        failed_voters: Vec<Peer>,
+        syncer: UnsafeRecoveryExecutePlanSyncer,
+    ) -> crate::Result<()> {
+        let router = self.0.lock().unwrap();
+        router.check_send(
+            region_id,
+            PeerMsg::UnsafeRecoveryDemoteFailedVoters {
+                syncer,
+                failed_voters,
+            },
+        )
     }
 
     fn broadcast_wait_apply(&self, syncer: UnsafeRecoveryWaitApplySyncer) {
