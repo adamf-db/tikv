@@ -428,11 +428,12 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
 
         info!(
             self.logger,
-            "execute CommitMerge";
+            "execute raftstore-v2/operation/command/admin/merge/commit:CommitMerge";
             "commit" => merge_commit,
             "entries" => merge.get_entries().len(),
             "index" => index,
             "source_region" => ?source_region,
+            "source_path" => source_path.to_str(),
         );
 
         let mut region = self.region().clone();
@@ -451,6 +452,7 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
         let logger = self.logger.clone();
         let region_id = self.region_id();
         let target_tablet = self.tablet().clone();
+        info!(logger, "raftstore-v2/operation/command/admin/merge/commit:CommitMerge Creating a new table"; "region_id" => region_id, "suffix for tablet" => Some(index));
         let mut ctx = TabletContext::new(&region, Some(index));
         ctx.flush_state = Some(self.flush_state().clone());
         let reg_clone = reg.clone();
@@ -509,12 +511,13 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
                 let merge_time = Instant::now_coarse();
                 info!(
                     logger,
-                    "applied CommitMerge";
+                    "applied raftstore-v2/operation/command/admin/merge/commit:CommitMerge";
                     "source_region" => ?source_region_clone,
                     "wait" => ?wait_duration.map(|d| format!("{}", ReadableDuration(d))),
                     "open" => %ReadableDuration(open_time.saturating_duration_since(start_time)),
                     "merge" => %ReadableDuration(flush_time.saturating_duration_since(open_time)),
                     "flush" => %ReadableDuration(merge_time.saturating_duration_since(flush_time)),
+                    "path" => %path.display(),
                 );
                 tx.send(tablet).unwrap();
             })

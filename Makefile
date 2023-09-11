@@ -182,6 +182,7 @@ dev: format clippy
 	@env FAIL_POINT=1 make test
 
 build: export TIKV_PROFILE=debug
+export RUSTFLAGS := $(RUSTFLAGS) -g
 ifeq ($(TIKV_FRAME_POINTER),1)
 build:
 	rustup component add rust-src

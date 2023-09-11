@@ -42,7 +42,7 @@ use raftstore::{
 use resource_control::ResourceController;
 use resource_metering::CollectorRegHandle;
 use service::service_manager::GrpcServiceManager;
-use slog::{warn, Logger};
+use slog::{warn, info, Logger};
 use sst_importer::SstImporter;
 use tikv_util::{
     box_err,
@@ -427,6 +427,8 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
         self.engine
             .for_each_raft_group::<Error, _>(&mut |region_id| {
                 assert_ne!(region_id, INVALID_ID);
+                info!(self.logger, "Initing all raft state machines for all regions, current region. Need a key manaber per region here!";
+                "region_id" => region_id, "store_id" => self.store_id);
                 let storage = match Storage::new(
                     region_id,
                     self.store_id,

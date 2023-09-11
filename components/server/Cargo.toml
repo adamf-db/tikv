@@ -86,6 +86,11 @@ tokio = { version = "1.5", features = ["rt-multi-thread"] }
 toml = "0.5"
 txn_types = { workspace = true }
 yatp = { workspace = true }
+opentelemetry = "0.20.0"
+opentelemetry-jaeger = "0.19.0"
+tracing = "0.1.37"
+tracing-opentelemetry = "0.21"
+tracing-subscriber = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

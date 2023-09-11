@@ -24,6 +24,7 @@ use std::{
     },
     time::Duration,
     u64,
+    error::Error,
 };
 
 use api_version::{dispatch_api_version, KvFormat};
@@ -132,7 +133,10 @@ fn run_impl<CER: ConfiguredRaftEngine, F: KvFormat>(
     config: TikvConfig,
     service_event_tx: TikvMpsc::Sender<ServiceEvent>,
     service_event_rx: TikvMpsc::Receiver<ServiceEvent>,
-) {
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+
+
+        // Traced app logic here...
     let mut tikv = TikvServer::<CER>::init::<F>(config, service_event_tx.clone());
 
     // Must be called after `TikvServer::init`.
@@ -147,6 +151,7 @@ fn run_impl<CER: ConfiguredRaftEngine, F: KvFormat>(
     let fetcher = tikv.core.init_io_utility();
     let listener = tikv.core.init_flow_receiver();
     let engines_info = tikv.init_engines(listener);
+    // tablet registry is created in engines_info
     let server_config = tikv.init_servers::<F>();
     tikv.register_services();
     tikv.init_metrics_flusher(fetcher, engines_info);
@@ -185,10 +190,15 @@ fn run_impl<CER: ConfiguredRaftEngine, F: KvFormat>(
         }
     }
     tikv.stop();
+
+
+    Ok(())
+
 }
 
 /// Run a TiKV server. Returns when the server is shutdown by the user, in which
 /// case the server will be properly stopped.
+
 pub fn run_tikv(
     config: TikvConfig,
     service_event_tx: TikvMpsc::Sender<ServiceEvent>,
@@ -214,9 +224,9 @@ pub fn run_tikv(
 
     dispatch_api_version!(config.storage.api_version(), {
         if !config.raft_engine.enable {
-            run_impl::<RocksEngine, API>(config, service_event_tx, service_event_rx)
+            assert!(run_impl::<RocksEngine, API>(config, service_event_tx, service_event_rx).is_ok())
         } else {
-            run_impl::<RaftLogEngine, API>(config, service_event_tx, service_event_rx)
+            assert!(run_impl::<RaftLogEngine, API>(config, service_event_tx, service_event_rx).is_ok())
         }
     })
 }
@@ -401,7 +411,7 @@ where
             grpc_service_mgr: GrpcServiceManager::new(tx),
         }
     }
-
+    
     fn init_gc_worker(&mut self) -> GcWorker<RaftKv2<RocksEngine, ER>> {
         let engines = self.engines.as_ref().unwrap();
         let gc_worker = GcWorker::new(
@@ -420,7 +430,7 @@ where
 
         gc_worker
     }
-
+    
     fn init_servers<F: KvFormat>(&mut self) -> Arc<VersionTrack<ServerConfig>> {
         let flow_controller = Arc::new(FlowController::Tablet(TabletFlowController::new(
             &self.core.config.storage.flow_control,
@@ -913,7 +923,7 @@ where
 
         server_config
     }
-
+    
     fn register_services(&mut self) {
         let servers = self.servers.as_mut().unwrap();
         let engines = self.engines.as_ref().unwrap();
@@ -1078,7 +1088,7 @@ where
             warn!("failed to register resource metering pubsub service");
         }
     }
-
+    
     fn init_metrics_flusher(
         &mut self,
         fetcher: BytesFetcher,
@@ -1124,7 +1134,7 @@ where
             },
         );
     }
-
+    
     fn init_storage_stats_task(&self) {
         let config_disk_capacity: u64 = self.core.config.raft_store.capacity.0;
         let data_dir = self.core.config.storage.data_dir.clone();
@@ -1258,7 +1268,7 @@ where
                 disk::set_disk_status(cur_disk_status);
             })
     }
-
+    
     fn init_sst_recovery_sender(&mut self) -> Option<Scheduler<String>> {
         if !self
             .core
@@ -1275,7 +1285,7 @@ where
             None
         }
     }
-
+    
     fn run_server(&mut self, server_config: Arc<VersionTrack<ServerConfig>>) {
         let server = self.servers.as_mut().unwrap();
         server
@@ -1291,7 +1301,7 @@ where
             )
             .unwrap_or_else(|e| fatal!("failed to start server: {}", e));
     }
-
+    
     fn run_status_server(&mut self) {
         // Create a status server.
         let status_enabled = !self.core.config.server.status_addr.is_empty();
@@ -1319,7 +1329,7 @@ where
             }
         }
     }
-
+    
     fn flush_before_stop(&mut self) {
         let change = {
             let mut change = HashMap::new();
@@ -1389,7 +1399,7 @@ where
             "server stop: flush done";
         );
     }
-
+    
     fn stop(mut self) {
         self.flush_before_stop();
         tikv_util::thread_group::mark_shutdown();

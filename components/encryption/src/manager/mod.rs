@@ -21,7 +21,7 @@ use file_system::File;
 use kvproto::encryptionpb::{DataKey, EncryptionMethod, FileDictionary, FileInfo, KeyDictionary};
 use protobuf::Message;
 use tikv_util::{box_err, debug, error, info, sys::thread::StdThreadBuildWrapper, thd_name, warn};
-
+use std::collections::HashMap;
 use crate::{
     config::EncryptionConfig,
     crypter::{self, Iv},
@@ -38,7 +38,7 @@ const FILE_DICT_NAME: &str = "file.dict";
 const ROTATE_CHECK_PERIOD: u64 = 600; // 10min
 const GENERATE_DATA_KEY_LIMIT: usize = 10;
 
-struct Dicts {
+pub struct Dicts {
     // Maps data file paths to key id and metadata. This file is stored as plaintext.
     file_dict: Mutex<FileDictionary>,
     file_dict_file: Mutex<FileDictionaryFile>,
@@ -450,12 +450,13 @@ fn generate_data_key(method: EncryptionMethod) -> (u64, Vec<u8>) {
 }
 
 pub struct DataKeyManager {
+   // dicts: HashMap<u32, Arc<Dicts>>,
     dicts: Arc<Dicts>,
     method: EncryptionMethod,
     rotate_tx: channel::Sender<RotateTask>,
     background_worker: Option<JoinHandle<()>>,
-    keyspace_id: u32,
 }
+
 
 #[derive(Debug, Clone)]
 pub struct DataKeyManagerArgs {
@@ -505,19 +506,39 @@ impl DataKeyManager {
         keyspace_id: u32,
         args: DataKeyManagerArgs,
     ) -> Result<Option<DataKeyManager>> {
-        let dicts = match Self::load_dicts(&*master_key, &args)? {
+
+        let dicts = match Self::create_dicts_map_entry(&*master_key, previous_master_key, &args)? {
+            None => return Ok(None),
+            Some(dicts) => dicts,
+
+        };
+      /*  let dicts = match Self::load_dicts(&*master_key, &args)? {
+            LoadDicts::Loaded(dicts) => dicts,
+            LoadDicts::EncryptionDisabled => return Ok(None),
+            LoadDicts::WrongMasterKey(err) => {
+                Self::load_previous_dicts(&*master_key, &*(previous_master_key()?), &args, err)?
+            }
+        };*/
+        Ok(Some(Self::from_dicts(dicts, args.method, master_key, keyspace_id)?))
+    }
+
+
+    pub fn create_dicts_map_entry(master_key: &dyn Backend,
+                                  previous_master_key: Box<dyn FnOnce() -> Result<Box<dyn Backend>>>,
+                                         args: &DataKeyManagerArgs) -> Result<Option<Dicts>> {
+        let dict_entry = match Self::load_dicts(&*master_key, &args)? {
             LoadDicts::Loaded(dicts) => dicts,
             LoadDicts::EncryptionDisabled => return Ok(None),
             LoadDicts::WrongMasterKey(err) => {
                 Self::load_previous_dicts(&*master_key, &*(previous_master_key()?), &args, err)?
             }
         };
-        Ok(Some(Self::from_dicts(dicts, args.method, master_key, keyspace_id)?))
+        Ok(Some(dict_entry))
     }
-
     /// Will block file operation for a considerable amount of time. Only used
     /// for debugging purpose.
     pub fn retain_encrypted_files(&self, f: impl Fn(&str) -> bool) {
+        // TODO: for dict in self.dicts - do this in a loop
         let mut dict = self.dicts.file_dict.lock().unwrap();
         let mut file_dict_file = self.dicts.file_dict_file.lock().unwrap();
         dict.files.retain(|fname, info| {
@@ -633,12 +654,18 @@ impl DataKeyManager {
 
         ENCRYPTION_INITIALIZED_GAUGE.set(1);
 
+        // TODO: check if dicts_map exists
+        // and if it does, just insert
+        // if not, create
+
+       // let mut dicts_map = HashMap::new();
+       // dicts_map.insert(keyspace_id, dicts);
+
         Ok(DataKeyManager {
-            dicts,
+            dicts: dicts,
             method,
             rotate_tx,
             background_worker: Some(background_worker),
-            keyspace_id: keyspace_id
         })
     }
 
@@ -895,6 +922,7 @@ impl EncryptionKeyManager for DataKeyManager {
     }
 
     fn new_file(&self, fname: &str) -> IoResult<FileEncryptionInfo> {
+        info!("new file"; "fname" => fname);
         let (_, data_key) = self.dicts.current_data_key();
         let key = data_key.get_key().to_owned();
         let file = self.dicts.new_file(fname, self.method, true)?;
@@ -903,7 +931,6 @@ impl EncryptionKeyManager for DataKeyManager {
             method: crypter::to_engine_encryption_method(file.method),
             iv: file.get_iv().to_owned(),
         };
-        info!("keyspace_id for new_file:"; "kId" => self.keyspace_id);
         Ok(encrypted_file)
     }
 

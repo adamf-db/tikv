@@ -387,6 +387,7 @@ impl<EK: KvEngine, ER: RaftEngine> Storage<EK, ER> {
         read_scheduler: Scheduler<ReadTask<EK>>,
         logger: &Logger,
     ) -> Result<Option<Storage<EK, ER>>> {
+        info!(logger, "raftstore-v2/operation/ready/apply_trace:new Creating new storage. Should get keyspace from region state");
         // Check latest region state to determine whether the peer is destroyed.
         let region_state = match engine.get_region_state(region_id, u64::MAX) {
             Ok(Some(s)) => s,

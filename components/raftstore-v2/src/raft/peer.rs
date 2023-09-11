@@ -150,6 +150,9 @@ impl<EK: KvEngine, ER: RaftEngine> Peer<EK, ER> {
         storage: Storage<EK, ER>,
     ) -> Result<Self> {
         let logger = storage.logger().clone();
+        info!(logger, "new peer, we got a DataKeyManager, but it's the generic one. Should be the one for this region!");
+        let keyspace_id = keys::decode_keyspace_id(&storage.region().start_key);
+        info!(logger, "new peer, keyspace_id is {}", keyspace_id);
 
         let applied_index = storage.apply_state().get_applied_index();
         let peer_id = storage.peer().get_id();
@@ -159,6 +162,7 @@ impl<EK: KvEngine, ER: RaftEngine> Peer<EK, ER> {
         let tablet_index = storage.region_state().get_tablet_index();
         let merge_context = MergeContext::from_region_state(&logger, storage.region_state());
         let persisted_applied = storage.apply_trace().persisted_apply_index();
+        info!(logger, "New peer"; "region_id" => region_id, "peer_id" => peer_id, "tablet_index" => tablet_index);
 
         let raft_group = RawNode::new(&raft_cfg, storage, &logger)?;
         let region = raft_group.store().region_state().get_region().clone();
@@ -169,6 +173,8 @@ impl<EK: KvEngine, ER: RaftEngine> Peer<EK, ER> {
         // old tablet and create new peer. We also can't get the correct range of the
         // region, which is required for kv data gc.
         if tablet_index != 0 {
+            info!(logger, "new peer, table index not 0, recovering";
+              "tablet_index" => tablet_index, "region_id" => region_id);
             raft_group
                 .store()
                 .recover_tablet(tablet_registry, key_manager, snap_mgr);

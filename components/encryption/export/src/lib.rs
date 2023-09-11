@@ -1,5 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 use std::path::Path;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 #[cfg(feature = "cloud-aws")]
 use aws::{AwsKms, STORAGE_VENDOR_NAME_AWS};
@@ -27,7 +29,12 @@ pub fn data_key_manager_from_config(
     let args = DataKeyManagerArgs::from_encryption_config(dict_path, config);
     let previous_master_key_conf = config.previous_master_key.clone();
     let previous_master_key = Box::new(move || create_backend(&previous_master_key_conf));
+    //let dict_map: HashMap<u32, Arc<Dicts>> = HashMap::new();
 
+
+
+    // master_key will have a keyspace_id of 0.
+    let data_key_manager = DataKeyManager::new(master_key, previous_master_key, 0, args.clone());
     for keyspace_config in &config.keyspace_keys {
         let keyspace_key = create_backend(&keyspace_config.key_config).map_err(|e| {
             error!("failed to access master key, {}", e);
@@ -35,13 +42,17 @@ pub fn data_key_manager_from_config(
         })?;
         let previous_key_conf = keyspace_config.previous_key_config.clone();
         let previous_key = Box::new(move || create_backend(&previous_key_conf));
+
+        // create the dicts?
+       // data_key_manager.dicts.insert(keyspace_config.keyspace_id, keyspace_key)
+
+
         let key_manager = DataKeyManager::new(
             keyspace_key, previous_key,
             keyspace_config.keyspace_id, args.clone());
     }
 
-    // master_key will have a keyspace_id of 0.
-    DataKeyManager::new(master_key, previous_master_key, 0, args)
+    data_key_manager
 
 }
 

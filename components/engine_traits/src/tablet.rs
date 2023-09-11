@@ -11,7 +11,7 @@ use std::{
 
 use collections::HashMap;
 use kvproto::metapb::Region;
-use tikv_util::box_err;
+use tikv_util::{info, box_err};
 
 #[cfg(any(test, feature = "testexport"))]
 use crate::StateStorage;
@@ -251,6 +251,8 @@ impl<EK> TabletRegistry<EK> {
 
     pub fn tablet_path(&self, id: u64, suffix: u64) -> PathBuf {
         let name = self.tablet_name("", id, suffix);
+        info!("engine_traits/src/table:table_path making tablet path"; "id" => id, "suffix" => suffix, "name" => name.to_owned());
+
         self.tablets.root.join(name)
     }
 
@@ -303,6 +305,7 @@ impl<EK> TabletRegistry<EK> {
         // TODO: use compaction filter to trim range.
         let tablet = self.tablets.factory.open_tablet(ctx, &path)?;
         let mut cached = self.get_or_default(id);
+        info!("Table load called"; "id" => id, "path" => path.to_str());
         cached.set(tablet);
         Ok(cached)
     }

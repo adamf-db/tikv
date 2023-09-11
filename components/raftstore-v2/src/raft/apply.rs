@@ -14,7 +14,7 @@ use raftstore::{
         Config, ReadTask,
     },
 };
-use slog::Logger;
+use slog::{info, Logger};
 use sst_importer::SstImporter;
 use tikv_util::{log::SlogFormat, worker::Scheduler, yatp_pool::FuturePool};
 
@@ -110,6 +110,7 @@ impl<EK: KvEngine, R> Apply<EK, R> {
         let mut remote_tablet = tablet_registry
             .get(region_state.get_region().get_id())
             .unwrap();
+
         assert_ne!(applied_term, 0, "{}", SlogFormat(&logger));
         let applied_index = flush_state.applied_index();
         assert_ne!(applied_index, 0, "{}", SlogFormat(&logger));
@@ -118,6 +119,10 @@ impl<EK: KvEngine, R> Apply<EK, R> {
         assert!(
             !cfg.use_delete_range,
             "v2 doesn't support RocksDB delete range"
+        );
+        info!(logger, "raftstore-v2/src/raft/apply:Apply Applying commits to tablet";
+            //"remote_tablet" => tablet,
+            "region_id" => region_state.get_region().get_id()
         );
         Apply {
             peer,

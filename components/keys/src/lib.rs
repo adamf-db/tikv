@@ -162,6 +162,16 @@ fn make_region_meta_key(region_id: u64, suffix: u8) -> [u8; 11] {
     key
 }
 
+// Decode the keyspace ID from the key
+pub fn decode_keyspace_id(key: &[u8]) -> u32 {
+    if key.is_empty() {
+        return 0; // zero is the default keyspace.
+    }
+    let mut buf = [0,0,0,0];
+    buf[1..4].copy_from_slice(&key[1..4]);
+    let v = u32::from_be_bytes(buf);
+    v
+}
 /// Decode region key, return the region id and meta suffix type.
 fn decode_region_key(prefix: &[u8], key: &[u8], category: &str) -> Result<(u64, u8)> {
     if prefix.len() + mem::size_of::<u64>() + mem::size_of::<u8>() != key.len() {

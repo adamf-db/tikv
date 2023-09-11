@@ -27,7 +27,7 @@ use raft_engine::{
     Command, Engine as RawRaftEngine, Error as RaftEngineError, LogBatch, MessageExt,
 };
 pub use raft_engine::{Config as RaftEngineConfig, ReadableSize, RecoveryMode};
-use tikv_util::Either;
+use tikv_util::{Either, info};
 
 use crate::perf_context::RaftEnginePerfContext;
 
@@ -549,6 +549,7 @@ impl RaftEngineReadOnly for RaftLogEngine {
         raft_group_id: u64,
         apply_index: u64,
     ) -> Result<Option<RegionLocalState>> {
+        info!("raft_log_engine/engine:get_region_state"; "raft_group_id" => raft_group_id);
         let mut state = None;
         self.0
             .scan_messages(
@@ -562,6 +563,7 @@ impl RaftEngineReadOnly for RaftLogEngine {
                         true
                     } else {
                         state = Some(value);
+                        info!("raft_log_engine/engine:get_region_state Got callback from scan_message"; "state" => ?state);
                         false
                     }
                 },
