@@ -17,6 +17,8 @@ use engine_traits::{
 use kvproto::kvrpcpb::ApiVersion;
 use raftstore::RegionInfoAccessor;
 use tikv_util::worker::Scheduler;
+use tikv_util::info;
+use collections::HashMap;
 
 use crate::{
     config::{CfResources, DbConfig, DbResources, TikvConfig, DEFAULT_ROCKSDB_SUB_DIR},
@@ -29,7 +31,7 @@ struct FactoryInner {
     api_version: ApiVersion,
     flow_listener: Option<engine_rocks::FlowListener>,
     sst_recovery_sender: Option<Scheduler<String>>,
-    encryption_key_manager: Option<Arc<DataKeyManager>>,
+    encryption_key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
     db_resources: DbResources,
     cf_resources: CfResources,
     state_storage: Option<Arc<dyn StateStorage>>,
@@ -46,7 +48,7 @@ impl KvEngineFactoryBuilder {
         env: Arc<Env>,
         config: &TikvConfig,
         cache: Cache,
-        key_manager: Option<Arc<DataKeyManager>>,
+        key_manager_map: Option<&HashMap<u32, Arc<DataKeyManager>>>,
     ) -> Self {
         Self {
             inner: FactoryInner {
@@ -55,7 +57,7 @@ impl KvEngineFactoryBuilder {
                 api_version: config.storage.api_version(),
                 flow_listener: None,
                 sst_recovery_sender: None,
-                encryption_key_manager: key_manager,
+                encryption_key_manager_map: key_manager_map.clone().cloned(),
                 db_resources: config.rocksdb.build_resources(env),
                 cf_resources: config.rocksdb.build_cf_resources(cache),
                 state_storage: None,
@@ -185,6 +187,7 @@ impl KvEngineFactory {
     /// It will always create in path/DEFAULT_DB_SUB_DIR.
     pub fn create_shared_db(&self, path: impl AsRef<Path>) -> Result<RocksEngine> {
         let path = path.as_ref();
+        info!("server/engine_factory/KvEngineFactory.create_shared_db for RaftKv (NOT RaftKv2) - path is {:?}", path);
         let mut db_opts = self.db_opts(EngineType::RaftKv);
         let cf_opts = self.cf_opts(None, EngineType::RaftKv);
         if let Some(listener) = &self.inner.flow_listener {
@@ -202,6 +205,7 @@ impl KvEngineFactory {
 
 impl TabletFactory<RocksEngine> for KvEngineFactory {
     fn open_tablet(&self, ctx: TabletContext, path: &Path) -> Result<RocksEngine> {
+        info!("server/engine_factory/TabletFactory:open_tablet for RaftKv2"; "path" => %path.display(), "region_id" => ctx.id, "suffix" => ?ctx.suffix);
         let mut db_opts = self.db_opts(EngineType::RaftKv2);
         let tablet_name = path.file_name().unwrap().to_str().unwrap().to_string();
         db_opts.set_info_log(TabletLogger::new(tablet_name));
@@ -231,7 +235,7 @@ impl TabletFactory<RocksEngine> for KvEngineFactory {
     }
 
     fn destroy_tablet(&self, ctx: TabletContext, path: &Path) -> Result<()> {
-        info!("destroy tablet"; "path" => %path.display(), "region_id" => ctx.id, "suffix" => ?ctx.suffix);
+        info!("server/engine_factory/TabletFactory:destroy_tablet"; "path" => %path.display(), "region_id" => ctx.id, "suffix" => ?ctx.suffix);
         // Create kv engine.
         let _db_opts = self.db_opts(EngineType::RaftKv2);
         let _cf_opts = self.cf_opts(None, EngineType::RaftKv2);
@@ -242,8 +246,13 @@ impl TabletFactory<RocksEngine> for KvEngineFactory {
         //   kv_cfs_opts,
         // )?;
         // TODO: use RocksDB::DestroyDB.
+
+        // TODO: using the id, which is usually the region id, get the correct encryption_key_manager
+        let keyspace_id = 0;
         let _ =
-            encryption_export::trash_dir_all(path, self.inner.encryption_key_manager.as_deref());
+            encryption_export::trash_dir_all(path,
+                                             self.inner.encryption_key_manager_map.as_ref()
+                                                 .unwrap().get(&keyspace_id).cloned().as_deref());
         if let Some(listener) = &self.inner.flow_listener {
             listener.clone_with(ctx.id).on_destroyed();
         }

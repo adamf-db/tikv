@@ -463,11 +463,15 @@ impl<EK: KvEngine, ER: RaftEngine> Storage<EK, ER> {
             return;
         }
         let region_id = self.region().get_id();
+        info!(self.logger(), "raftstore-v2/operation/ready/apply_trace:recover_tablet - recovering";
+            "tablet_index" => tablet_index, "region_id" => region_id);
         let target_path = registry.tablet_path(region_id, tablet_index);
         if target_path.exists() {
             // Move data succeeded before restart, nothing to recover.
             return;
         }
+        info!(self.logger(), "raftstore-v2/operation/ready/apply_trace:recover_tablet - target_path {:?}", target_path;
+            "region_id" => region_id);
         if tablet_index == RAFT_INIT_LOG_INDEX {
             // Its data may come from split or snapshot. Try split first.
             let split_path = temp_split_path(registry, region_id);

@@ -1577,6 +1577,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "cloud",
+ "collections",
  "crc32fast",
  "crossbeam",
  "derive_more",
@@ -1618,6 +1619,7 @@ dependencies = [
  "aws",
  "azure",
  "cloud",
+ "collections",
  "derive_more",
  "encryption",
  "error_code",
@@ -2990,8 +2992,7 @@ dependencies = [
 
 [[package]]
 name = "kvproto"
-version = "0.0.2"
-source = "git+https://github.com/pingcap/kvproto.git#ecdbf1f8c130089392a9bb5f86f7577deddfbed5"
+version = "0.0.3"
 dependencies = [
  "futures 0.3.15",
  "grpcio",
@@ -5034,6 +5035,7 @@ dependencies = [
  "futures 0.3.15",
  "grpcio",
  "hex 0.4.2",
+ "keys",
  "kvproto",
  "lazy_static",
  "log_wrappers",

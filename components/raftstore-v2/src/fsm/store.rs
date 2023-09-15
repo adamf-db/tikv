@@ -58,6 +58,7 @@ impl<EK> StoreMeta<EK> {
 
     pub fn set_region(&mut self, region: &Region, initialized: bool, logger: &Logger) {
         let region_id = region.get_id();
+        info!(logger, "raftstore-v2/fsm/store:StoreMeta.set_region, region {:?}", region; "keyspace_id" => region.keyspace_id);
         let version = region.get_region_epoch().get_version();
         let prev = self
             .regions

@@ -275,11 +275,16 @@ impl<EK: KvEngine> Runner<EK> {
     }
 
     fn trim(&self, tablet: EK, start: Box<[u8]>, end: Box<[u8]>, cb: Box<dyn FnOnce() + Send>) {
+
         let start_key = keys::data_key(&start);
         let end_key = keys::data_end_key(&end);
         let range1 = Range::new(&[], &start_key);
         let range2 = Range::new(&end_key, keys::DATA_MAX_KEY);
         let mut wopts = WriteOptions::default();
+        info!(self.logger,"raftstore-v2/worker/tablet:Runner.trim, path: {:?}", tablet.path();
+              "start_key" => log_wrappers::Value::key(&start_key),
+              "end_key" => log_wrappers::Value::key(&end_key),
+        );
         wopts.set_disable_wal(true);
         if let Err(e) =
             tablet.delete_ranges_cfs(&wopts, DeleteStrategy::DeleteFiles, &[range1, range2])
@@ -335,8 +340,10 @@ impl<EK: KvEngine> Runner<EK> {
                     );
                     return;
                 }
-                // drop before callback.
+                let path = PathBuf::from(tablet.path());
+
                 drop(tablet);
+                info!(logger,"raftstore-v2/worker/tablet:Runner.trim, finished & dropped the tablet, path: {:?}", path);
                 fail_point!("tablet_trimmed_finished");
                 cb();
             })

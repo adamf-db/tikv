@@ -15,7 +15,7 @@ use std::{
     u64,
 };
 
-use encryption_export::{data_key_manager_from_config, DataKeyManager};
+use encryption_export::{data_key_manager_from_config, data_key_manager_map_from_config, DataKeyManager};
 use engine_rocks::{
     flush_engine_statistics,
     raw::{Cache, Env},
@@ -73,6 +73,7 @@ pub struct TikvServerCore {
     pub store_path: PathBuf,
     pub lock_files: Vec<File>,
     pub encryption_key_manager: Option<Arc<DataKeyManager>>,
+    pub encryption_key_manager_map: Option<collections::HashMap<u32, Arc<DataKeyManager>>>,
     pub flow_info_sender: Option<mpsc::Sender<FlowInfo>>,
     pub flow_info_receiver: Option<mpsc::Receiver<FlowInfo>>,
     pub to_stop: Vec<Box<dyn Stop>>,
@@ -261,8 +262,23 @@ impl TikvServerCore {
         prometheus::register(Box::new(yatp::metrics::TASK_POLL_DURATION.clone())).unwrap();
         prometheus::register(Box::new(yatp::metrics::TASK_EXEC_TIMES.clone())).unwrap();
     }
-
+    pub fn init_multi_encryption(&mut self) {
+        info!("Init'ing encryption, MULTI key mode");
+        self.encryption_key_manager_map = data_key_manager_map_from_config(
+            &self.config.security.encryption,
+            &self.config.storage.data_dir,
+        )
+            .map_err(|e| {
+                panic!(
+                    "Encryption failed to initialize: {}. code: {}",
+                    e,
+                    e.error_code()
+                )
+            })
+            .unwrap();
+    }
     pub fn init_encryption(&mut self) {
+        info!("Init'ing encryption, single key mode");
         self.encryption_key_manager = data_key_manager_from_config(
             &self.config.security.encryption,
             &self.config.storage.data_dir,
@@ -701,6 +717,7 @@ pub trait ConfiguredRaftEngine: RaftEngine {
         _: &Arc<Env>,
         _: &Option<Arc<DataKeyManager>>,
         _: &Cache,
+        _: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>
     ) -> (Self, Option<Arc<RocksStatistics>>);
     fn as_rocks_engine(&self) -> Option<&RocksEngine>;
     fn register_config(&self, _cfg_controller: &mut ConfigController);
@@ -712,6 +729,7 @@ impl<T: RaftEngine> ConfiguredRaftEngine for T {
         _: &Arc<Env>,
         _: &Option<Arc<DataKeyManager>>,
         _: &Cache,
+        _: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>
     ) -> (Self, Option<Arc<RocksStatistics>>) {
         unimplemented!()
     }
@@ -727,7 +745,9 @@ impl ConfiguredRaftEngine for RocksEngine {
         env: &Arc<Env>,
         key_manager: &Option<Arc<DataKeyManager>>,
         block_cache: &Cache,
+        _: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>
     ) -> (Self, Option<Arc<RocksStatistics>>) {
+        info!("impl ConfiguredRaftEngine for RocksEngine");
         let mut raft_data_state_machine = RaftDataStateMachine::new(
             &config.storage.data_dir,
             &config.raft_engine.config().dir,
@@ -775,9 +795,11 @@ impl ConfiguredRaftEngine for RaftLogEngine {
     fn build(
         config: &TikvConfig,
         env: &Arc<Env>,
-        key_manager: &Option<Arc<DataKeyManager>>,
+        _: &Option<Arc<DataKeyManager>>,
         block_cache: &Cache,
+        multi_key_manager: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>,
     ) -> (Self, Option<Arc<RocksStatistics>>) {
+        info!("impl ConfiguredRaftEngine for RAFTEngine");
         let mut raft_data_state_machine = RaftDataStateMachine::new(
             &config.storage.data_dir,
             &config.raft_store.raftdb_path,
@@ -786,8 +808,10 @@ impl ConfiguredRaftEngine for RaftLogEngine {
         let should_dump = raft_data_state_machine.before_open_target();
 
         let raft_config = config.raft_engine.config();
+        // XXX probably should be be `unwrap_or_else(.., None)`
         let raft_engine =
-            RaftLogEngine::new(raft_config, key_manager.clone(), get_io_rate_limiter())
+            RaftLogEngine::new(raft_config,
+                               multi_key_manager.as_ref().unwrap().get(&0).cloned(), get_io_rate_limiter())
                 .expect("failed to open raft engine");
 
         if should_dump {

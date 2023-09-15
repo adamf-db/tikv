@@ -471,10 +471,11 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
 
         info!(
             self.logger,
-            "split region";
+            "raftstore-v2/operation/command/admin:Apply.apply_batch_split: split region with keyspace_id";
             "region" => ?region,
             "index" => log_index,
             "boundaries" => %KeysInfoFormatter(boundaries.iter()),
+            "keyspace_id" => region.keyspace_id,
         );
 
         let split_reqs = req.get_splits();
@@ -504,6 +505,10 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
                 new_region.set_start_key(start_key.to_vec());
                 new_region.set_end_key(end_key.to_vec());
                 new_region.set_peers(region.get_peers().to_vec().into());
+                new_region.set_keyspace_id(keys::decode_keyspace_id(&new_region.start_key, &new_region.end_key));
+                info!(self.logger,
+                    "raftstore-v2/operation/command/admin:Apply.apply_batch_split: inside split region map, new_region {:?}", new_region;
+                    "keyspace_id" => new_region.keyspace_id);
                 // If the `req` is the `derived_req`, the peers are already set correctly and
                 // the following loop will not be executed due to the empty `new_peer_ids` in
                 // the `derived_req`
@@ -534,6 +539,8 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
         let (tx, rx) = oneshot::channel();
         let tablet = self.tablet().clone();
         let logger = self.logger.clone();
+        info!(logger, "raftstore-v2/operation/command/admin:Apply.split, tablet: {:?}", tablet);
+
         let tablet_registry = self.tablet_registry().clone();
         self.high_priority_pool()
             .spawn(async move {
@@ -547,8 +554,11 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
                     )
                 });
 
+                info!(logger, "raftstore-v2/operation/command/admin:Apply.split: need to get keyspace ids on the temp split path stuff");
                 for id in split_region_ids {
                     let split_temp_path = temp_split_path(&tablet_registry, id);
+                    info!(logger, "raftstore-v2/operation/command/admin:Apply.split: temp split path: {:?}", split_temp_path;
+                        "region_id" => region_id, "split_region_id" => id);
                     checkpointer
                         .create_at(&split_temp_path, None, 0)
                         .unwrap_or_else(|e| {
@@ -563,12 +573,14 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
                 }
 
                 let derived_path = tablet_registry.tablet_path(region_id, log_index);
-
+                info!(logger, "raftstore-v2/operation/command/admin:Apply.split: derived_path: {:?}", derived_path);
                 // If it's recovered from restart, it's possible the target path exists already.
                 // And because checkpoint is atomic, so we don't need to worry about corruption.
                 // And it's also wrong to delete it and remake as it may has applied and flushed
                 // some data to the new checkpoint before being restarted.
                 if !derived_path.exists() {
+                    info!(logger, "raftstore-v2/operation/command/admin:Apply.split: derived_path doesn't exist, derived_path: {:?}", derived_path);
+
                     checkpointer
                         .create_at(&derived_path, None, 0)
                         .unwrap_or_else(|e| {
@@ -592,7 +604,7 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
         // to be removed after when it's stable
         info!(
             self.logger,
-            "checkpoint done and resume batch split execution";
+            "raftstore-v2/operation/command/admin:Apply.split: checkpoint done and resume batch split execution";
             "region" =>  ?self.region(),
             "checkpoint_duration" => ?checkpoint_duration,
             "total_duration" => ?elapsed,
@@ -612,6 +624,10 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
             .set_region(regions[derived_index].clone());
         self.region_state_mut().set_tablet_index(log_index);
 
+        info!(
+            self.logger,
+            "raftstore-v2/operation/command/admin:Apply.split: split should be done, path: {:?}, region: {:?}", path, regions[derived_index],
+        );
         let mut resp = AdminResponse::default();
         resp.mut_splits().set_regions(regions.clone().into());
         PEER_ADMIN_CMD_COUNTER.batch_split.success.inc();

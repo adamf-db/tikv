@@ -410,6 +410,7 @@ where
                 store_path,
                 lock_files: vec![],
                 encryption_key_manager: None,
+                encryption_key_manager_map: None,
                 flow_info_sender: None,
                 flow_info_receiver: None,
                 to_stop: vec![],
@@ -1534,6 +1535,7 @@ impl<CER: ConfiguredRaftEngine, F: KvFormat> TikvServer<CER, F> {
             &env,
             &self.core.encryption_key_manager,
             &block_cache,
+            &None,
         );
         self.raft_statistics = raft_statistics;
 
@@ -1542,7 +1544,7 @@ impl<CER: ConfiguredRaftEngine, F: KvFormat> TikvServer<CER, F> {
             env,
             &self.core.config,
             block_cache,
-            self.core.encryption_key_manager.clone(),
+            self.core.encryption_key_manager_map.as_ref(),
         )
         .compaction_event_sender(Arc::new(RaftRouterCompactedEventSender {
             router: Mutex::new(self.router.clone()),

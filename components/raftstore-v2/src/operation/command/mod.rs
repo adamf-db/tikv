@@ -47,7 +47,7 @@ use raftstore::{
     },
     Error, Result,
 };
-use slog::{debug, error, warn};
+use slog::{debug, error, warn, info};
 use tikv_util::{
     box_err,
     log::SlogFormat,
@@ -123,7 +123,10 @@ impl<EK: KvEngine, ER: RaftEngine> Peer<EK, ER> {
     /// when the old apply scheduler is dropped.
     #[inline]
     pub fn schedule_apply_fsm<T>(&mut self, store_ctx: &mut StoreContext<EK, ER, T>) {
+        info!(self.logger, "raftstore-v2/oepration/command/mod:Peer.schedule_apply_fsm");
         let region_state = self.storage().region_state().clone();
+        info!(self.logger, "raftstore-v2/oepration/command/mod:Peer.schedule_apply_fsm, region_state: {:?}", region_state);
+
         let mailbox = match store_ctx.router.mailbox(self.region_id()) {
             Some(m) => m,
             None => {

@@ -173,6 +173,8 @@ impl FileSystem for ManagedFileSystem {
 
     fn create<P: AsRef<Path>>(&self, path: P) -> IoResult<Self::Handle> {
         let base = Arc::new(self.base_file_system.create(path.as_ref())?);
+        info!("ManagedFileSystem:create, with fname {}", path.as_ref().to_str().unwrap());
+        info!("XXX This is where we'd need to use the correct DKM!");
         if let Some(ref manager) = self.key_manager {
             manager.new_file(path.as_ref().to_str().unwrap())?;
         }
@@ -198,6 +200,8 @@ impl FileSystem for ManagedFileSystem {
     }
 
     fn rename<P: AsRef<Path>>(&self, src_path: P, dst_path: P) -> IoResult<()> {
+        info!("ManagedFileSystem:rename, with src_path {} and dst_path {}",
+            src_path.as_ref().to_str().unwrap(), dst_path.as_ref().to_str().unwrap());
         if let Some(ref manager) = self.key_manager {
             // Note: `rename` will reuse the old entryption info from `src_path`.
             let src_str = src_path.as_ref().to_str().unwrap();
@@ -221,6 +225,8 @@ impl FileSystem for ManagedFileSystem {
 
     // TODO: distinguish reuse to trash and from trash.
     fn reuse<P: AsRef<Path>>(&self, src_path: P, dst_path: P) -> IoResult<()> {
+        info!("ManagedFileSystem:REUSE, with src_path {} and dst_path {}",
+            src_path.as_ref().to_str().unwrap(), dst_path.as_ref().to_str().unwrap());
         if let Some(ref manager) = self.key_manager {
             // Note: In contrast to `rename`, `reuse` will make sure the encryption
             // metadata is properly updated by rotating the encryption key for safety,
@@ -266,6 +272,7 @@ impl FileSystem for ManagedFileSystem {
     }
 
     fn new_reader(&self, handle: Arc<Self::Handle>) -> IoResult<Self::Reader> {
+        info!("ManagedFileSystem:new_reader");
         let base_reader = self.base_file_system.new_reader(handle.base.clone())?;
         if let Some(ref key_manager) = self.key_manager {
             Ok(ManagedReader {
@@ -281,6 +288,8 @@ impl FileSystem for ManagedFileSystem {
     }
 
     fn new_writer(&self, handle: Arc<Self::Handle>) -> IoResult<Self::Writer> {
+        info!("ManagedFileSystem:new_writer");
+
         let base_writer = self.base_file_system.new_writer(handle.base.clone())?;
 
         if let Some(ref key_manager) = self.key_manager {
@@ -341,6 +350,7 @@ impl RaftLogEngine {
         key_manager: Option<Arc<DataKeyManager>>,
         rate_limiter: Option<Arc<IoRateLimiter>>,
     ) -> Result<Self> {
+        info!("raft_log_engine:RaftLogEngine.new: New RaftLogEngine being created");
         let file_system = Arc::new(ManagedFileSystem::new(key_manager, rate_limiter));
         Ok(RaftLogEngine(Arc::new(
             RawRaftEngine::open_with_file_system(config, file_system).map_err(transfer_error)?,
@@ -563,13 +573,14 @@ impl RaftEngineReadOnly for RaftLogEngine {
                         true
                     } else {
                         state = Some(value);
-                        info!("raft_log_engine/engine:get_region_state Got callback from scan_message"; "state" => ?state);
+                        info!("raft_log_engine/engine:get_region_state Got callback from scan_message";
+                            "state" => ?state);
                         false
                     }
                 },
             )
             .map_err(transfer_error)?;
-        Ok(state)
+        Ok(state.clone())
     }
 
     fn get_apply_state(

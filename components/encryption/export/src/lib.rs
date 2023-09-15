@@ -1,7 +1,8 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 use std::path::Path;
-use std::collections::HashMap;
+use collections::HashMap;
 use std::sync::Arc;
+use std::fs::create_dir_all;
 
 #[cfg(feature = "cloud-aws")]
 use aws::{AwsKms, STORAGE_VENDOR_NAME_AWS};
@@ -22,6 +23,7 @@ pub fn data_key_manager_from_config(
     config: &EncryptionConfig,
     dict_path: &str,
 ) -> Result<Option<DataKeyManager>> {
+    info!("SINGLE DKM: Loading data key manager from config...");
     let master_key = create_backend(&config.master_key).map_err(|e| {
         error!("failed to access master key, {}", e);
         e
@@ -29,12 +31,37 @@ pub fn data_key_manager_from_config(
     let args = DataKeyManagerArgs::from_encryption_config(dict_path, config);
     let previous_master_key_conf = config.previous_master_key.clone();
     let previous_master_key = Box::new(move || create_backend(&previous_master_key_conf));
-    //let dict_map: HashMap<u32, Arc<Dicts>> = HashMap::new();
+    DataKeyManager::new(master_key, previous_master_key, 0, args)
+}
 
+pub fn data_key_manager_map_from_config(
+    config: &EncryptionConfig,
+    dict_path: &str,
+) -> Result<Option<HashMap<u32, Arc<DataKeyManager>>>> {
+    info!("MAP VERSION OF DKM LOADER: Loading data key manager from config...");
+    let master_key = create_backend(&config.master_key).map_err(|e| {
+        error!("failed to access master key, {}", e);
+        e
+    })?;
+
+    let default_keyspace: u32 = 0;
+    let file_dict_path = format!("{}/{}", dict_path, default_keyspace);
+
+    info!("creating new dir if needed {}", file_dict_path);
+    create_dir_all(file_dict_path.clone())?;
+    let args = DataKeyManagerArgs::from_encryption_config(&file_dict_path, config);
+    let previous_master_key_conf = config.previous_master_key.clone();
+    let previous_master_key = Box::new(move || create_backend(&previous_master_key_conf));
+    let mut dkm_map: HashMap<u32, Arc<DataKeyManager>> = HashMap::default();
 
 
     // master_key will have a keyspace_id of 0.
-    let data_key_manager = DataKeyManager::new(master_key, previous_master_key, 0, args.clone());
+    let data_key_manager = match DataKeyManager::new(master_key, previous_master_key, 0, args.clone())
+        .unwrap() {
+        None => return Ok(None),
+        Some(data_key_manager) => data_key_manager,
+    };
+    dkm_map.insert(0, Arc::new(data_key_manager));
     for keyspace_config in &config.keyspace_keys {
         let keyspace_key = create_backend(&keyspace_config.key_config).map_err(|e| {
             error!("failed to access master key, {}", e);
@@ -42,19 +69,20 @@ pub fn data_key_manager_from_config(
         })?;
         let previous_key_conf = keyspace_config.previous_key_config.clone();
         let previous_key = Box::new(move || create_backend(&previous_key_conf));
-
-        // create the dicts?
-       // data_key_manager.dicts.insert(keyspace_config.keyspace_id, keyspace_key)
-
-
+        let new_file_dict_path = format!("{}/{}", dict_path, keyspace_config.keyspace_id);
+        info!("creating new dir if needed {}", new_file_dict_path);
+        create_dir_all(new_file_dict_path.clone())?;
+        let new_args = DataKeyManagerArgs::from_encryption_config(&new_file_dict_path, config);
         let key_manager = DataKeyManager::new(
             keyspace_key, previous_key,
-            keyspace_config.keyspace_id, args.clone());
+            keyspace_config.keyspace_id, new_args.clone()).unwrap().unwrap();
+        dkm_map.insert(keyspace_config.keyspace_id, Arc::new(key_manager));
     }
 
-    data_key_manager
-
+    info!("dkm_map len"; "dkm_map_len" => dkm_map.len());
+    Ok(Option::from(dkm_map))
 }
+
 
 pub fn create_backend(config: &MasterKeyConfig) -> Result<Box<dyn Backend>> {
     let result = create_backend_inner(config);

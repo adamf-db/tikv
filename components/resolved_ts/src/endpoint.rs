@@ -186,6 +186,8 @@ struct ObserveRegion {
 
 impl ObserveRegion {
     fn new(meta: Region, rrp: Arc<RegionReadProgress>, memory_quota: Arc<MemoryQuota>) -> Self {
+        let keyspace_id = keys::decode_keyspace_id(&meta.start_key, &meta.end_key);
+        info!("I think i'm watching region {:?}", meta; "keyspace_id" => keyspace_id);
         ObserveRegion {
             resolver: Resolver::with_read_progress(meta.id, Some(rrp), memory_quota.clone()),
             meta,

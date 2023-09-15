@@ -30,6 +30,7 @@ engine_traits = { workspace = true }
 fail = "0.5"
 futures = "0.3"
 grpcio = { workspace = true }
+keys = {workspace = true }
 hex = "0.4"
 kvproto = { workspace = true }
 lazy_static = "1.3"

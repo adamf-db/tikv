@@ -147,7 +147,11 @@ fn run_impl<CER: ConfiguredRaftEngine, F: KvFormat>(
     tikv.core.check_conflict_addr();
     tikv.core.init_fs();
     tikv.core.init_yatp();
-    tikv.core.init_encryption();
+    //info!("server2/run_impl: init encryption");
+    //tikv.core.init_encryption();
+    info!("server2/run_impl:init_multi_ encryption");
+    tikv.core.init_multi_encryption();
+
     let fetcher = tikv.core.init_io_utility();
     let listener = tikv.core.init_flow_receiver();
     let engines_info = tikv.init_engines(listener);
@@ -378,6 +382,7 @@ where
                 store_path,
                 lock_files: vec![],
                 encryption_key_manager: None,
+                encryption_key_manager_map: None,
                 flow_info_sender: None,
                 flow_info_receiver: None,
                 to_stop: vec![],
@@ -865,6 +870,8 @@ where
             .registry
             .register_consistency_check_observer(100, observer);
 
+        info!("server2:init_servers - starting node PASS IN MULTI KEY MANAGER HERE");
+        info!("Change the pass in of encryption_key_manager to encryption_key_manager_map");
         self.node
             .as_mut()
             .unwrap()
@@ -884,7 +891,7 @@ where
                 raft_store.clone(),
                 &state,
                 importer.clone(),
-                self.core.encryption_key_manager.clone(),
+                self.core.encryption_key_manager_map.clone(),
                 self.grpc_service_mgr.clone(),
             )
             .unwrap_or_else(|e| fatal!("failed to start node: {}", e));
@@ -1448,12 +1455,13 @@ impl<CER: ConfiguredRaftEngine> TikvServer<CER> {
         &mut self,
         flow_listener: engine_rocks::FlowListener,
     ) -> Arc<EnginesResourceInfo> {
+        info!("server2/impl<TikvServer>:init_engines: creating raft engine with encryption key manager");
         let block_cache = self.core.config.storage.block_cache.build_shared_cache();
         let env = self
             .core
             .config
             .build_shared_rocks_env(
-                self.core.encryption_key_manager.clone(),
+                self.core.encryption_key_manager_map.as_ref().unwrap().get(&0).cloned(),
                 get_io_rate_limiter(),
             )
             .unwrap();
@@ -1464,19 +1472,21 @@ impl<CER: ConfiguredRaftEngine> TikvServer<CER> {
             &env,
             &self.core.encryption_key_manager,
             &block_cache,
+            &self.core.encryption_key_manager_map,
         );
         self.raft_statistics = raft_statistics;
 
         // Create kv engine.
+        info!("server2/impl<TikvServer>:init_engines:Creating kv engine factory - XXX should we use the map here?");
         let builder = KvEngineFactoryBuilder::new(
             env,
             &self.core.config,
             block_cache,
-            self.core.encryption_key_manager.clone(),
+            self.core.encryption_key_manager_map.as_ref(),
         )
         .sst_recovery_sender(self.init_sst_recovery_sender())
         .flow_listener(flow_listener);
-
+        info!("server2/impl<TikvServer>:init_engines: creating NodeV2");
         let mut node = NodeV2::new(
             &self.core.config.server,
             self.pd_client.clone(),
@@ -1498,6 +1508,7 @@ impl<CER: ConfiguredRaftEngine> TikvServer<CER> {
         )));
         let factory = Box::new(builder.build());
         self.kv_statistics = Some(factory.rocks_statistics());
+        info!("server2/impl<TikvServer>:init_engines: building table registry with path, {:?}", self.core.store_path.join("tablets"));
         let registry = TabletRegistry::new(factory, self.core.store_path.join("tablets"))
             .unwrap_or_else(|e| fatal!("failed to create tablet registry {:?}", e));
         let cfg_controller = self.cfg_controller.as_mut().unwrap();

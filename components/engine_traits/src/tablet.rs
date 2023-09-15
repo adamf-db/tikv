@@ -43,6 +43,7 @@ impl<EK> CachedTablet<EK> {
 impl<EK: Clone> CachedTablet<EK> {
     #[inline]
     fn new(data: Option<EK>) -> Self {
+        info!("engine_traits/tablet:CachedTablet.new");
         CachedTablet {
             latest: Arc::new(LatestTablet {
                 data: Mutex::new(data.clone()),
@@ -212,6 +213,7 @@ impl<EK> Clone for TabletRegistry<EK> {
 impl<EK> TabletRegistry<EK> {
     pub fn new(factory: Box<dyn TabletFactory<EK>>, path: impl Into<PathBuf>) -> Result<Self> {
         let root = path.into();
+        info!("engine_traits/tablet:TableRegistry:new, root is {:?}", root);
         std::fs::create_dir_all(&root)?;
         Ok(TabletRegistry {
             tablets: Arc::new(TabletRegistryInner {
@@ -270,6 +272,7 @@ impl<EK> TabletRegistry<EK> {
     where
         EK: Clone,
     {
+        info!("engine_traits/tablet:TabletRegistry.get_or_default"; "id" => id);
         let mut tablets = self.tablets.tablets.lock().unwrap();
         tablets
             .entry(id)
@@ -295,6 +298,7 @@ impl<EK> TabletRegistry<EK> {
         assert!(ctx.suffix.is_some());
         let id = ctx.id;
         let path = self.tablet_path(id, ctx.suffix.unwrap());
+        info!("engine_traits/tablet:TabletRegistry.load tablet load - path {:?}", path);
         if !create && !self.tablets.factory.exists(&path) {
             return Err(Error::Other(box_err!(
                 "tablet ({}, {:?}) doesn't exist",

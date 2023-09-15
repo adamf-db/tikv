@@ -123,6 +123,7 @@ impl MergeInProgressGuard {
         index: u64,
         tablet_path: &Path,
     ) -> io::Result<Option<Self>> {
+        info!(logger, "raftstore-v2/merge/commit:MergeInTabletGuard.new, {:?}", tablet_path);
         let name = registry.tablet_name(MERGE_IN_PROGRESS_PREFIX, target_region_id, index);
         let marker_path = registry.tablet_root().join(name);
         if !marker_path.exists() {

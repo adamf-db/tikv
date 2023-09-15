@@ -21,7 +21,7 @@ use std::{
 
 use collections::HashMap;
 use encryption_export::{
-    create_backend, data_key_manager_from_config, from_engine_encryption_method, DataKeyManager,
+    create_backend, data_key_manager_map_from_config, data_key_manager_from_config, from_engine_encryption_method, DataKeyManager,
     DecrypterReader, Iv,
 };
 use engine_rocks::get_env;
@@ -1294,13 +1294,12 @@ fn flush_std_buffer_to_log(
 }
 
 fn read_cluster_id(config: &TikvConfig) -> Result<u64, String> {
-    let key_manager =
-        data_key_manager_from_config(&config.security.encryption, &config.storage.data_dir)
-            .unwrap()
-            .map(Arc::new);
-    let env = get_env(key_manager.clone(), None /* io_rate_limiter */).unwrap();
+    let key_manager_map =
+        data_key_manager_map_from_config(&config.security.encryption, &config.storage.data_dir)
+            .unwrap();
+    let env = get_env(key_manager_map.as_ref().unwrap().get(&0).cloned(), None /* io_rate_limiter */).unwrap();
     let cache = config.storage.block_cache.build_shared_cache();
-    let kv_engine = KvEngineFactoryBuilder::new(env, config, cache, key_manager)
+    let kv_engine = KvEngineFactoryBuilder::new(env, config, cache, key_manager_map.as_ref())
         .build()
         .create_shared_db(&config.storage.data_dir)
         .map_err(|e| format!("create_shared_db fail: {}", e))?;

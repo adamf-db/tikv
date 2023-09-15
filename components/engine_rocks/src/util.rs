@@ -10,7 +10,7 @@ use rocksdb::{
     CompactionFilterValueType, DBTableFileCreationReason, Env, Range as RocksRange, SliceTransform,
     DB,
 };
-use slog_global::warn;
+use slog_global::{info, warn};
 
 use crate::{
     cf_options::RocksCfOptions, db_options::RocksDbOptions, engine::RocksEngine, r2e,
@@ -18,6 +18,8 @@ use crate::{
 };
 
 pub fn new_temp_engine(path: &tempfile::TempDir) -> Engines<RocksEngine, RocksEngine> {
+    info!("engine_rocks/util:new_temp_engine, path: {:?}", path);
+
     let raft_path = path.path().join(std::path::Path::new("raft"));
     Engines::new(
         new_engine(path.path().to_str().unwrap(), engine_traits::ALL_CFS).unwrap(),
@@ -26,10 +28,12 @@ pub fn new_temp_engine(path: &tempfile::TempDir) -> Engines<RocksEngine, RocksEn
 }
 
 pub fn new_default_engine(path: &str) -> Result<RocksEngine> {
+    info!("engine_rocks/util:new_default_engine, path: {:?}", path);
     new_engine(path, &[CF_DEFAULT])
 }
 
 pub fn new_engine(path: &str, cfs: &[&str]) -> Result<RocksEngine> {
+    info!("engine_rocks/util:new_engine, path: {:?}", path);
     let mut db_opts = RocksDbOptions::default();
     db_opts.set_statistics(&RocksStatistics::new_titan());
     let cf_opts = cfs.iter().map(|name| (*name, Default::default())).collect();
@@ -41,6 +45,7 @@ pub fn new_engine_opt(
     db_opt: RocksDbOptions,
     cf_opts: Vec<(&str, RocksCfOptions)>,
 ) -> Result<RocksEngine> {
+    info!("engine_rocks/util:new_engine_opt, path {:?}", path);
     let mut db_opt = db_opt.into_raw();
     if cf_opts.iter().all(|(name, _)| *name != CF_DEFAULT) {
         return Err(engine_traits::Error::Engine(
@@ -55,11 +60,13 @@ pub fn new_engine_opt(
         .map(|(name, opt)| (name, opt.into_raw()))
         .collect();
 
+
     // Creates a new db if it doesn't exist.
     if !db_exist(path) {
         db_opt.create_if_missing(true);
         db_opt.create_missing_column_families(true);
 
+        info!("engine_rocks/util:new_engine_opt db doesn't exist at path {:}, creating.", path);
         let db = DB::open_cf(db_opt, path, cf_opts.into_iter().collect()).map_err(r2e)?;
 
         return Ok(RocksEngine::new(db));
@@ -78,9 +85,12 @@ pub fn new_engine_opt(
             None => Arc::new(Env::default()),
         };
         // panic if OPTIONS not found for existing instance?
+        info!("engine_rocks/util:new_engine_opt call load_latest_options for path {:}: JUST WRITE HTE CODE EHERE", path );
+
         let (_, tmp) = load_latest_options(path, &env, true)
-            .unwrap_or_else(|e| panic!("failed to load_latest_options {:?}", e))
-            .unwrap_or_else(|| panic!("couldn't find the OPTIONS file"));
+            .unwrap_or_else(|e| panic!("failed to load_latest_options {:?} - {:?}", e, path))
+            .unwrap_or_else(|| panic!("couldn't find the OPTIONS file {:?}", path));
+        info!("engine_rocks/util:new_engine_opt FINISHED load_latest_options for path {:}", path);
         tmp
     } else {
         vec![]

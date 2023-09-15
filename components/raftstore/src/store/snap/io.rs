@@ -49,6 +49,7 @@ pub fn build_plain_cf_file<E>(
 where
     E: KvEngine,
 {
+    info!("raftsore/store/snap/io:build_plain_cf_file");
     let cf = cf_file.cf;
     let path = cf_file.path.join(cf_file.gen_tmp_file_name(0));
     let path = path.to_str().unwrap();

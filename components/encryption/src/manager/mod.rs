@@ -21,7 +21,6 @@ use file_system::File;
 use kvproto::encryptionpb::{DataKey, EncryptionMethod, FileDictionary, FileInfo, KeyDictionary};
 use protobuf::Message;
 use tikv_util::{box_err, debug, error, info, sys::thread::StdThreadBuildWrapper, thd_name, warn};
-use std::collections::HashMap;
 use crate::{
     config::EncryptionConfig,
     crypter::{self, Iv},
@@ -38,6 +37,7 @@ const FILE_DICT_NAME: &str = "file.dict";
 const ROTATE_CHECK_PERIOD: u64 = 600; // 10min
 const GENERATE_DATA_KEY_LIMIT: usize = 10;
 
+#[derive(Debug)]
 pub struct Dicts {
     // Maps data file paths to key id and metadata. This file is stored as plaintext.
     file_dict: Mutex<FileDictionary>,
@@ -54,6 +54,7 @@ pub struct Dicts {
     current_key_id: AtomicU64,
     rotation_period: Duration,
     base: PathBuf,
+    keyspace_id: u32,
 }
 
 impl Dicts {
@@ -62,12 +63,14 @@ impl Dicts {
         rotation_period: Duration,
         enable_file_dictionary_log: bool,
         file_dictionary_rewrite_threshold: u64,
+        keyspace_id: u32,
     ) -> Result<Dicts> {
+        let dict_file_name = format!("file_{keyspace_id}.dict");
         Ok(Dicts {
             file_dict: Mutex::new(FileDictionary::default()),
             file_dict_file: Mutex::new(FileDictionaryFile::new(
                 Path::new(path),
-                FILE_DICT_NAME,
+                &dict_file_name,
                 enable_file_dictionary_log,
                 file_dictionary_rewrite_threshold,
             )?),
@@ -79,6 +82,7 @@ impl Dicts {
             current_key_id: AtomicU64::new(0),
             rotation_period,
             base: Path::new(path).to_owned(),
+            keyspace_id,
         })
     }
 
@@ -88,25 +92,30 @@ impl Dicts {
         master_key: &dyn Backend,
         enable_file_dictionary_log: bool,
         file_dictionary_rewrite_threshold: u64,
+        keyspace_id: u32,
     ) -> Result<Option<Dicts>> {
+        info!("encryption/manager/mod:Dicts.open: path {}", path);
         let base = Path::new(path);
-
+        let dict_file_name = format!("file_{keyspace_id}.dict");
         // File dict is saved in plaintext.
         let log_content = FileDictionaryFile::open(
             base,
-            FILE_DICT_NAME,
+            &dict_file_name,
             enable_file_dictionary_log,
             file_dictionary_rewrite_threshold,
             false,
         );
+        info!("encryption/manager/mod:Dicts.open dict file: {}/{}", path, dict_file_name );
 
         let key_file = EncryptedFile::new(base, KEY_DICT_NAME);
         let key_bytes = key_file.read(master_key);
 
+        info!("encryption/manager/mod:Dicts.open key file: {}/{}", path, KEY_DICT_NAME);
+
         match (log_content, key_bytes) {
             // Both files are found.
             (Ok((file_dict_file, file_dict)), Ok(key_bytes)) => {
-                info!("encryption: found both of key dictionary and file dictionary.");
+                info!("encryption/manager/mod:Dicts.open: found both of key dictionary and file dictionary.");
                 let mut key_dict = KeyDictionary::default();
                 key_dict.merge_from_bytes(&key_bytes)?;
                 let current_key_id = AtomicU64::new(key_dict.current_key_id);
@@ -122,6 +131,7 @@ impl Dicts {
                     current_key_id,
                     rotation_period,
                     base: base.to_owned(),
+                    keyspace_id,
                 }))
             }
             // If neither files are found, encryption was never enabled.
@@ -129,23 +139,23 @@ impl Dicts {
                 if file_err.kind() == ErrorKind::NotFound
                     && key_err.kind() == ErrorKind::NotFound =>
             {
-                info!("encryption: none of key dictionary and file dictionary are found.");
+                info!("encryption/manager/mod:Dicts.open: none of key dictionary and file dictionary are found.");
                 Ok(None)
             }
             (Ok((file_dict_file, file_dict)), Err(Error::Io(key_err)))
                 if key_err.kind() == ErrorKind::NotFound && file_dict.files.is_empty() =>
             {
                 std::fs::remove_file(file_dict_file.file_path())?;
-                info!("encryption: file dict is empty and none of key dictionary are found.");
+                info!("encryption/manager/mod:Dicts.open: file dict is empty and none of key dictionary are found.");
                 Ok(None)
             }
             // ...else, return either error.
             (file_dict_file, key_bytes) => {
                 if let Err(key_err) = key_bytes {
-                    error!("encryption: failed to load key dictionary.");
+                    error!("encryption/manager/mod:Dicts.open: failed to load key dictionary.");
                     Err(key_err)
                 } else {
-                    error!("encryption: failed to load file dictionary.");
+                    error!("encryption/manager/mod:Dicts.open: failed to load file dictionary.");
                     Err(file_dict_file.unwrap_err())
                 }
             }
@@ -154,6 +164,7 @@ impl Dicts {
 
     fn save_key_dict(&self, master_key: &dyn Backend) -> Result<()> {
         // In reality we only call this function inside `run_background_rotate_work`.
+        info!("encryption/manager/mod:Dicts.save_key_dict: {}/{}", self.base.display(), KEY_DICT_NAME);
         let _lk = self.key_dict_file_lock.try_lock().unwrap();
         let file = EncryptedFile::new(&self.base, KEY_DICT_NAME);
         let (keys_len, key_bytes) = {
@@ -196,11 +207,16 @@ impl Dicts {
     }
 
     fn get_file(&self, fname: &str) -> Option<FileInfo> {
+        info!("Dicts - manager/mod:Dicts:get_file, fname {}", fname; "keyspace_id" => self.keyspace_id,
+            "current_key_id" => self.current_key_id.load(Ordering::SeqCst) );
+
         let dict = self.file_dict.lock().unwrap();
         dict.files.get(fname).cloned()
     }
 
     fn new_file(&self, fname: &str, method: EncryptionMethod, sync: bool) -> Result<FileInfo> {
+        info!("encryption/manager/mod:Dicts:new_file"; "fname" => fname, "keyspace_id" => self.keyspace_id,
+        "current_key_id" => self.current_key_id.load(Ordering::SeqCst) );
         let mut file_dict_file = self.file_dict_file.lock().unwrap();
         let iv = if method != EncryptionMethod::Plaintext {
             Iv::new_ctr()
@@ -223,12 +239,12 @@ impl Dicts {
         ENCRYPTION_FILE_NUM_GAUGE.set(file_num);
 
         if method != EncryptionMethod::Plaintext {
-            debug!("new encrypted file";
+            debug!("encryption/manager/mod:Dicts:new_file: new encrypted file";
                   "fname" => fname,
                   "method" => format!("{:?}", method),
                   "iv" => hex::encode(iv.as_slice()));
         } else {
-            debug!("new plaintext file"; "fname" => fname);
+            debug!("encryption/manager/mod:Dicts:new_file: new plaintext file"; "fname" => fname);
         }
         Ok(file)
     }
@@ -236,6 +252,9 @@ impl Dicts {
     // If the file does not exist, return Ok(())
     // In either case the intent that the file not exist is achieved.
     fn delete_file(&self, fname: &str, sync: bool) -> Result<()> {
+        info!("encryption/manager/mod:Dicts:delete_file: fname {}", fname; "keyspace_id" => self.keyspace_id,
+        "current_key_id" => self.current_key_id.load(Ordering::SeqCst));
+
         let mut file_dict_file = self.file_dict_file.lock().unwrap();
         let (file, file_num) = {
             let mut file_dict = self.file_dict.lock().unwrap();
@@ -247,7 +266,7 @@ impl Dicts {
                 }
                 None => {
                     // Could be a plaintext file not tracked by file dictionary.
-                    info!("delete untracked plaintext file"; "fname" => fname);
+                    info!("encryption/manager/mod:Dicts:delete_file: delete untracked plaintext file"; "fname" => fname);
                     return Ok(());
                 }
             }
@@ -256,14 +275,17 @@ impl Dicts {
         file_dict_file.remove(fname, sync)?;
         ENCRYPTION_FILE_NUM_GAUGE.set(file_num);
         if file.method != EncryptionMethod::Plaintext {
-            debug!("delete encrypted file"; "fname" => fname);
+            debug!("encryption/manager/mod:Dicts:delete_file: delete encrypted file"; "fname" => fname);
         } else {
-            debug!("delete plaintext file"; "fname" => fname);
+            debug!("encryption/manager/mod:Dicts:delete_file: delete plaintext file"; "fname" => fname);
         }
         Ok(())
     }
 
     fn link_file(&self, src_fname: &str, dst_fname: &str, sync: bool) -> Result<Option<()>> {
+        info!("encryption/manager/mod:Dicts:link_file"; "src_fname" => src_fname, "dst_fname" => dst_fname,
+            "keyspace_id" => self.keyspace_id, "current_key_id" => self.current_key_id.load(Ordering::SeqCst));
+
         let mut file_dict_file = self.file_dict_file.lock().unwrap();
         let (method, file, file_num) = {
             let mut file_dict = self.file_dict.lock().unwrap();
@@ -271,7 +293,7 @@ impl Dicts {
                 Some(file_info) => file_info.clone(),
                 None => {
                     // Could be a plaintext file not tracked by file dictionary.
-                    info!("link untracked plaintext file"; "src" => src_fname, "dst" => dst_fname);
+                    info!("encryption/manager/mod:Dicts:link_file - link untracked plaintext file"; "src" => src_fname, "dst" => dst_fname);
                     return Ok(None);
                 }
             };
@@ -288,15 +310,15 @@ impl Dicts {
         ENCRYPTION_FILE_NUM_GAUGE.set(file_num);
 
         if method != EncryptionMethod::Plaintext {
-            info!("link encrypted file"; "src" => src_fname, "dst" => dst_fname);
+            info!("encryption/manager/mod:Dicts:link_file - link encrypted file"; "src" => src_fname, "dst" => dst_fname);
         } else {
-            info!("link plaintext file"; "src" => src_fname, "dst" => dst_fname);
+            info!("encryption/manager/mod:Dicts:link_file - link plaintext file"; "src" => src_fname, "dst" => dst_fname);
         }
         Ok(Some(()))
     }
 
     fn rotate_key(&self, key_id: u64, key: DataKey, master_key: &dyn Backend) -> Result<bool> {
-        info!("encryption: rotate data key."; "key_id" => key_id);
+        info!("encryption/manager/mod:Dicts:rotate_key: rotate data key."; "key_id" => key_id);
         {
             let mut key_dict = self.key_dict.lock().unwrap();
             match key_dict.keys.entry(key_id) {
@@ -455,6 +477,7 @@ pub struct DataKeyManager {
     method: EncryptionMethod,
     rotate_tx: channel::Sender<RotateTask>,
     background_worker: Option<JoinHandle<()>>,
+    keyspace_id: u32,
 }
 
 
@@ -497,6 +520,7 @@ impl DataKeyManager {
         args: DataKeyManagerArgs,
         keyspace_id: u32,
     ) -> Result<Option<DataKeyManager>> {
+        info!("encryption/manager/mod:DataKeyManager.new_previously_loaded New DataKeyManager"; "keyspace_id" => self.keyspace_id);
         Self::new(master_key, Box::new(move || Ok(previous_master_key)), keyspace_id, args)
     }
 
@@ -506,8 +530,8 @@ impl DataKeyManager {
         keyspace_id: u32,
         args: DataKeyManagerArgs,
     ) -> Result<Option<DataKeyManager>> {
-
-        let dicts = match Self::create_dicts_map_entry(&*master_key, previous_master_key, &args)? {
+        info!("encryption/manager/mod:DataKeyManager.new New DataKeyManager");
+        let dicts = match Self::create_dicts_map_entry(&*master_key, previous_master_key, &args, keyspace_id)? {
             None => return Ok(None),
             Some(dicts) => dicts,
 
@@ -522,15 +546,18 @@ impl DataKeyManager {
         Ok(Some(Self::from_dicts(dicts, args.method, master_key, keyspace_id)?))
     }
 
+    pub fn get_keyspace_id(&self) -> u32 {
+        self.keyspace_id
+    }
 
     pub fn create_dicts_map_entry(master_key: &dyn Backend,
                                   previous_master_key: Box<dyn FnOnce() -> Result<Box<dyn Backend>>>,
-                                         args: &DataKeyManagerArgs) -> Result<Option<Dicts>> {
-        let dict_entry = match Self::load_dicts(&*master_key, &args)? {
+                                         args: &DataKeyManagerArgs, keyspace_id: u32) -> Result<Option<Dicts>> {
+        let dict_entry = match Self::load_dicts(&*master_key, &args, keyspace_id)? {
             LoadDicts::Loaded(dicts) => dicts,
             LoadDicts::EncryptionDisabled => return Ok(None),
             LoadDicts::WrongMasterKey(err) => {
-                Self::load_previous_dicts(&*master_key, &*(previous_master_key()?), &args, err)?
+                Self::load_previous_dicts(&*master_key, &*(previous_master_key()?), &args, err, keyspace_id)?
             }
         };
         Ok(Some(dict_entry))
@@ -554,7 +581,8 @@ impl DataKeyManager {
         });
     }
 
-    fn load_dicts(master_key: &dyn Backend, args: &DataKeyManagerArgs) -> Result<LoadDicts> {
+    fn load_dicts(master_key: &dyn Backend, args: &DataKeyManagerArgs, keyspace_id: u32) -> Result<LoadDicts> {
+        info!("encryption/manager/mod:DataKeyManager.load_dicts: {:?}", args; "keyspace_id" => keyspace_id);
         if args.method != EncryptionMethod::Plaintext && !master_key.is_secure() {
             return Err(box_err!(
                 "encryption is to enable but master key is either absent or insecure."
@@ -567,22 +595,24 @@ impl DataKeyManager {
                 master_key,
                 args.enable_file_dictionary_log,
                 args.file_dictionary_rewrite_threshold,
+                keyspace_id,
             ),
             args.method,
         ) {
             // Encryption is disabled.
             (Ok(None), EncryptionMethod::Plaintext) => {
-                info!("encryption is disabled.");
+                info!("encryption/manager/mod:DataKeyManager.load_dicts: encryption is disabled.");
                 Ok(LoadDicts::EncryptionDisabled)
             }
             // Encryption is being enabled.
             (Ok(None), _) => {
-                info!("encryption is being enabled. method = {:?}", args.method);
+                info!("encryption/manager/mod:DataKeyManager.load_dicts: encryption is being enabled. method = {:?}", args.method);
                 Ok(LoadDicts::Loaded(Dicts::new(
                     &args.dict_path,
                     args.rotation_period,
                     args.enable_file_dictionary_log,
                     args.file_dictionary_rewrite_threshold,
+                    keyspace_id
                 )?))
             }
             // Encryption was enabled and master key didn't change.
@@ -603,6 +633,7 @@ impl DataKeyManager {
         previous_master_key: &dyn Backend,
         args: &DataKeyManagerArgs,
         e_current: Box<dyn std::error::Error + Send + Sync + 'static>,
+        keyspace_id: u32,
     ) -> Result<Dicts> {
         warn!(
             "failed to open encryption metadata using master key. \
@@ -610,12 +641,14 @@ impl DataKeyManager {
                 current master key: {:?}, previous master key: {:?}",
             master_key, previous_master_key
         );
+        info!("encryption/manager/mod:DataKeyManager.load_previous_dicts"; "keyspace_id" => keyspace_id);
         let dicts = Dicts::open(
             &args.dict_path,
             args.rotation_period,
             previous_master_key,
             args.enable_file_dictionary_log,
             args.file_dictionary_rewrite_threshold,
+            keyspace_id
         )
         .map_err(|e| {
             if let Error::WrongMasterKey(e_previous) = e {
@@ -632,7 +665,7 @@ impl DataKeyManager {
         // Rewrite key_dict after replace master key.
         dicts.save_key_dict(master_key)?;
 
-        info!("encryption: persisted result after replace master key.");
+        info!("encryption/manager/mod:DataKeyManager.load_previous_dicts: persisted result after replace master key.");
         Ok(dicts)
     }
 
@@ -660,16 +693,19 @@ impl DataKeyManager {
 
        // let mut dicts_map = HashMap::new();
        // dicts_map.insert(keyspace_id, dicts);
+        info!("encryption/manager/mod:DataKeyManager.from_dicts loaded: {:?}", dicts; "keyspace_id" => keyspace_id);
 
         Ok(DataKeyManager {
             dicts: dicts,
             method,
             rotate_tx,
             background_worker: Some(background_worker),
+            keyspace_id,
         })
     }
 
-    pub fn create_file_for_write<P: AsRef<Path>>(&self, path: P) -> Result<EncrypterWriter<File>> {
+    pub fn create_file_for_write<P: AsRef<Path> + std::fmt::Debug >(&self, path: P) -> Result<EncrypterWriter<File>> {
+        info!("encryption/manager/mod:DataKeyManager.create_file_for_write: {:?}", path; "keyspace_id" => self.keyspace_id);
         let file_writer = File::create(&path)?;
         self.open_file_with_writer(path, file_writer, true /* create */)
     }
@@ -680,15 +716,19 @@ impl DataKeyManager {
         writer: W,
         create: bool,
     ) -> Result<EncrypterWriter<W>> {
+
         let fname = path.as_ref().to_str().ok_or_else(|| {
             Error::Other(box_err!(
                 "failed to convert path to string {:?}",
                 path.as_ref()
             ))
         })?;
+        info!("encryption/manager/mod:DataKeyManager.open_file_with_writer: fname {}", fname; "keyspace_id" => self.keyspace_id);
         let file = if create {
+            info!("encryption/manager/mod:DataKeyManager.open_file_with_writer: NEW FILE fname {}", fname; "keyspace_id" => self.keyspace_id);
             self.new_file(fname)?
         } else {
+            info!("encryption/manager/mod:DataKeyManager.open_file_with_writer: get file fname {}", fname; "keyspace_id" => self.keyspace_id);
             self.get_file(fname)?
         };
         EncrypterWriter::new(
@@ -704,7 +744,8 @@ impl DataKeyManager {
         )
     }
 
-    pub fn open_file_for_read<P: AsRef<Path>>(&self, path: P) -> Result<DecrypterReader<File>> {
+    pub fn open_file_for_read<P: AsRef<Path> + std::fmt::Debug>(&self, path: P) -> Result<DecrypterReader<File>> {
+        info!("encryption/manager/mod:DataKeyManager.open_file_for_read: {:?}", path; "keyspace_id" => self.keyspace_id);
         let file_reader = File::open(&path)?;
         self.open_file_with_reader(path, file_reader)
     }
@@ -720,6 +761,7 @@ impl DataKeyManager {
                 path.as_ref()
             ))
         })?;
+        info!("encryption/manager/mod:DataKeyManager.open_file_with_reader: with fname {}", fname; "keyspace_id" => self.keyspace_id);
         let file = self.get_file(fname)?;
         DecrypterReader::new(
             reader,
@@ -779,6 +821,7 @@ impl DataKeyManager {
     }
 
     fn get_file_exists(&self, fname: &str) -> IoResult<Option<FileEncryptionInfo>> {
+        info!("encryption/manager/mod:DataKeyManager.get_file_exists"; "fname" => fname, "keyspace_id" => self.keyspace_id);
         let (method, key_id, iv) = {
             match self.dicts.get_file(fname) {
                 Some(file) => (file.method, file.key_id, file.iv),
@@ -809,6 +852,7 @@ impl DataKeyManager {
 
     /// Returns initial vector and data key.
     pub fn get_file_internal(&self, fname: &str) -> IoResult<Option<(Vec<u8>, DataKey)>> {
+        info!("encryption/manager/mod:DataKeyManager.get_file_internal"; "fname" => fname, "keyspace_id" => self.keyspace_id);
         let (key_id, iv) = {
             match self.dicts.get_file(fname) {
                 Some(file) if file.method != EncryptionMethod::Plaintext => (file.key_id, file.iv),
@@ -904,6 +948,7 @@ impl Drop for DataKeyManager {
 impl EncryptionKeyManager for DataKeyManager {
     // Get key to open existing file.
     fn get_file(&self, fname: &str) -> IoResult<FileEncryptionInfo> {
+        info!("encryption/manager/mod:EncryptionKeyManager.get_file"; "fname" => fname, "keyspace_id" => self.keyspace_id);
         match self.get_file_exists(fname) {
             Ok(Some(result)) => Ok(result),
             Ok(None) => {
@@ -922,7 +967,7 @@ impl EncryptionKeyManager for DataKeyManager {
     }
 
     fn new_file(&self, fname: &str) -> IoResult<FileEncryptionInfo> {
-        info!("new file"; "fname" => fname);
+        info!("encryption/manager/mod:EncryptionKeyManager.new_file"; "fname" => fname, "keyspace_id" => self.keyspace_id);
         let (_, data_key) = self.dicts.current_data_key();
         let key = data_key.get_key().to_owned();
         let file = self.dicts.new_file(fname, self.method, true)?;
@@ -940,6 +985,7 @@ impl EncryptionKeyManager for DataKeyManager {
         fail_point!("key_manager_fails_before_delete_file", |_| IoResult::Err(
             io::ErrorKind::Other.into()
         ));
+        info!("encryption/manager/mod:EncryptionKeyManager.delete_file";"fname" => fname, "keyspace_id" => self.keyspace_id );
         if let Some(physical) = physical_fname {
             let physical_path = Path::new(physical);
             if physical_path.is_dir() {
@@ -958,6 +1004,9 @@ impl EncryptionKeyManager for DataKeyManager {
     }
 
     fn link_file(&self, src_fname: &str, dst_fname: &str) -> IoResult<()> {
+        info!("encryption/manager/mod:EncryptionKeyManager.link_file:";
+            "src_fname" => src_fname, "dst_fname" => dst_fname,  "keyspace_id" => self.keyspace_id);
+
         let src_path = Path::new(src_fname);
         let dst_path = Path::new(dst_fname);
         if src_path.is_dir() {

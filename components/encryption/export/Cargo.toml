@@ -16,6 +16,7 @@ aws = { workspace = true, optional = true }
 azure = { workspace = true, optional = true }
 cloud = { workspace = true }
 derive_more = "0.99.3"
+collections = { workspace = true }
 encryption = { workspace = true }
 error_code = { workspace = true }
 file_system = { workspace = true }

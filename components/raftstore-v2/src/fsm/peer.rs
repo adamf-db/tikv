@@ -3,7 +3,6 @@
 //! This module contains the peer implementation for batch system.
 
 use std::{borrow::Cow, sync::Arc};
-
 use batch_system::{BasicMailbox, Fsm};
 use crossbeam::channel::TryRecvError;
 use encryption_export::DataKeyManager;
@@ -46,8 +45,9 @@ impl<EK: KvEngine, ER: RaftEngine> PeerFsm<EK, ER> {
         snap_mgr: &TabletSnapManager,
         storage: Storage<EK, ER>,
     ) -> Result<SenderFsmPair<EK, ER>> {
+        //info!(self.logger, "raftstore-v2/fsm/peer:new calling Peer:new");
         let peer = Peer::new(cfg, tablet_registry, key_manager, snap_mgr, storage)?;
-        info!(peer.logger, "raftstore-v2/fsm/peer:new create peer";
+        info!(peer.logger, "raftstore-v2/fsm/peer:new after Peer:new";
             "raft_state" => ?peer.storage().raft_state(),
             "apply_state" => ?peer.storage().apply_state(),
             "region_state" => ?peer.storage().region_state(),

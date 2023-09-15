@@ -2,7 +2,7 @@
 
 use std::{cmp, error::Error as StdError, i32, result, sync::Arc, thread, time::Duration};
 
-use encryption_export::data_key_manager_from_config;
+use encryption_export::data_key_manager_map_from_config;
 use engine_rocks::{util::new_engine_opt, RocksEngine};
 use engine_traits::{Engines, Error as EngineError, Peekable, RaftEngine, SyncMutable};
 use kvproto::{metapb, raft_serverpb::StoreIdent};
@@ -328,18 +328,18 @@ pub fn create_local_engine_service(
     config: &TikvConfig,
 ) -> std::result::Result<Box<dyn LocalEngineService>, String> {
     // init env for init kv db and raft engine
-    let key_manager =
-        data_key_manager_from_config(&config.security.encryption, &config.storage.data_dir)
-            .map_err(|e| format!("init encryption manager: {}", e))?
-            .map(Arc::new);
+    let key_manager_map =
+        data_key_manager_map_from_config(&config.security.encryption, &config.storage.data_dir)
+            .map_err(|e| format!("init encryption manager: {}", e))?;
+    info!("snap_recovery:create_location_engine_service - XXX  build shared rocks env - maybe pass in multi data_key_manager?");
     let env = config
-        .build_shared_rocks_env(key_manager.clone(), None)
+        .build_shared_rocks_env(key_manager_map.as_ref().unwrap().get(&0).cloned(), None)
         .map_err(|e| format!("build shared rocks env: {}", e))?;
     let block_cache = config.storage.block_cache.build_shared_cache();
 
     // init rocksdb / kv db
     let factory =
-        KvEngineFactoryBuilder::new(env.clone(), config, block_cache, key_manager.clone())
+        KvEngineFactoryBuilder::new(env.clone(), config, block_cache, key_manager_map.as_ref())
             .lite(true)
             .build();
     let kv_db = match factory.create_shared_db(&config.storage.data_dir) {
@@ -370,7 +370,8 @@ pub fn create_local_engine_service(
             error!("raft engine not exists: {}", cfg.dir);
             tikv_util::logger::exit_process_gracefully(-1);
         }
-        let raft_db = RaftLogEngine::new(cfg, key_manager, None /* io_rate_limiter */).unwrap();
+        info!("snap_recovery:create_location_engine_service XXX creating raft_db - should we use multi data key manager?");
+        let raft_db = RaftLogEngine::new(cfg, key_manager_map.as_ref().unwrap().get(&0).cloned(), None /* io_rate_limiter */).unwrap();
         let local_engines = LocalEngines::new(Engines::new(kv_db, raft_db));
 
         Ok(Box::new(local_engines) as Box<dyn LocalEngineService>)

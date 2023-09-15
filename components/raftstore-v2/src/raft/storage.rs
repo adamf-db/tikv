@@ -168,12 +168,10 @@ impl<EK: KvEngine, ER: RaftEngine> Storage<EK, ER> {
         };
         let region = region_state.get_region();
         let epoch = region.get_region_epoch().clone();
-        info!(logger, "raftstore-v2 create pre-keyspace, start_key: {:?}", region.start_key);
-        //let start_key = keys::data_key(&region.start_key);
-        //let end_key = keys::data_key(&region.end_key);
-        //let keyspace_id = keys::decode_keyspace_id(&region.start_key);
-        let keyspace_id = keys::decode_keyspace_id(&region.start_key);
+        info!(logger, "raftstore-v2 create pre-keyspace, start_key: {:?}, end_key: {:?}", region.start_key, region.end_key);
+        let keyspace_id = keys::decode_keyspace_id(&region.start_key, &region.end_key);
         info!(logger, "raftstore-v2 create post-keyspace, keyspace_id: {:?}", keyspace_id);
+
 
         info!(logger, "raftstore-v2 create, start_key: {:?}, possible keyspace {:?}", region.start_key, keyspace_id; "region_id" => region.id, "peer_id" => peer.get_id(),
             "start_key_len" => region.start_key.len());

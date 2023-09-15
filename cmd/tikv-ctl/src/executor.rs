@@ -6,7 +6,7 @@ use std::{
 };
 
 use api_version::{ApiV1, KvFormat};
-use encryption_export::data_key_manager_from_config;
+use encryption_export::data_key_manager_map_from_config;
 use engine_rocks::util::{db_exist, new_engine_opt};
 use engine_traits::{
     Engines, Error as EngineError, RaftEngine, TabletRegistry, ALL_CFS, CF_DEFAULT, CF_LOCK,
@@ -92,16 +92,15 @@ pub fn new_debug_executor(
     let data_dir = data_dir.unwrap();
     let engine_type = get_engine_type(data_dir);
 
-    let key_manager = data_key_manager_from_config(&cfg.security.encryption, &cfg.storage.data_dir)
-        .unwrap()
-        .map(Arc::new);
+    let key_manager_map = data_key_manager_map_from_config(&cfg.security.encryption, &cfg.storage.data_dir)
+        .unwrap();
 
     let cache = cfg.storage.block_cache.build_shared_cache();
     let env = cfg
-        .build_shared_rocks_env(key_manager.clone(), None /* io_rate_limiter */)
+        .build_shared_rocks_env(key_manager_map.as_ref().unwrap().get(&0).cloned(), None /* io_rate_limiter */)
         .unwrap();
 
-    let factory = KvEngineFactoryBuilder::new(env.clone(), cfg, cache, key_manager.clone())
+    let factory = KvEngineFactoryBuilder::new(env.clone(), cfg, cache, key_manager_map.as_ref())
         .lite(true)
         .build();
 
@@ -136,7 +135,7 @@ pub fn new_debug_executor(
             error!("raft engine not exists: {}", config.dir);
             tikv_util::logger::exit_process_gracefully(-1);
         }
-        let raft_db = RaftLogEngine::new(config, key_manager, None /* io_rate_limiter */).unwrap();
+        let raft_db = RaftLogEngine::new(config, key_manager_map.as_ref().unwrap().get(&0).cloned(), None /* io_rate_limiter */).unwrap();
         match engine_type {
             EngineType::RaftKv => {
                 let kv_db = match factory.create_shared_db(data_dir) {

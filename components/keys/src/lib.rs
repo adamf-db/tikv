@@ -163,14 +163,33 @@ fn make_region_meta_key(region_id: u64, suffix: u8) -> [u8; 11] {
 }
 
 // Decode the keyspace ID from the key
-pub fn decode_keyspace_id(key: &[u8]) -> u32 {
-    if key.is_empty() {
+pub fn decode_keyspace_id(start_key: &[u8], end_key: &[u8]) -> u32 {
+    if start_key.is_empty() {
         return 0; // zero is the default keyspace.
     }
-    let mut buf = [0,0,0,0];
-    buf[1..4].copy_from_slice(&key[1..4]);
-    let v = u32::from_be_bytes(buf);
-    v
+    if end_key.is_empty() {
+        return 0; // zero is the default keyspace.
+    }
+
+    // The rule is that if the end key's keyspace_id is greater then the start key's keyspace_id,
+    // the start key contains a valid keyspace_id
+    // eg:
+    // start: 7200006600000000FB
+    //   end: 7800000000000000FB
+    // would turn into 66 and 0, so that's not a valid keyspace_id
+    // (it's just the remaining key range that's in the default keyspace id of 0)
+    let mut start_buf = [0,0,0,0];
+    start_buf[1..4].copy_from_slice(&start_key[1..4]);
+    let start_key_keyspace_id = u32::from_be_bytes(start_buf);
+
+    let mut end_buf = [0,0,0,0];
+    end_buf[1..4].copy_from_slice(&end_key[1..4]);
+    let end_key_keyspace_id = u32::from_be_bytes(end_buf);
+
+    if start_key_keyspace_id > end_key_keyspace_id {
+        return 0;
+    }
+    start_key_keyspace_id
 }
 /// Decode region key, return the region id and meta suffix type.
 fn decode_region_key(prefix: &[u8], key: &[u8], category: &str) -> Result<(u64, u8)> {

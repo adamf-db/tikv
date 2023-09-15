@@ -661,7 +661,7 @@ impl<EK: KvEngine, ER: RaftEngine> EntryStorage<EK, ER> {
                 e
             ));
         }
-        info!("New EntryStorage"; "region_id" => region.id, "peer_id" => peer_id);
+        info!("raftstore/store/entry_storage:EntryStorage.new"; "region_id" => region.id, "peer_id" => peer_id);
         let last_term = init_last_term(&raft_engine, region, &raft_state, &apply_state)?;
         let applied_term = init_applied_term(&raft_engine, region, &apply_state)?;
         Ok(Self {

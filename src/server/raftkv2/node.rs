@@ -1,6 +1,7 @@
 // Copyright 2022 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::sync::{Arc, Mutex};
+use collections::HashMap;
 
 use causal_ts::CausalTsProviderImpl;
 use concurrency_manager::ConcurrencyManager;
@@ -114,12 +115,13 @@ where
         store_cfg: Arc<VersionTrack<raftstore_v2::Config>>,
         state: &Mutex<GlobalReplicationState>,
         sst_importer: Arc<SstImporter>,
-        key_manager: Option<Arc<DataKeyManager>>,
+        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
         grpc_service_mgr: GrpcServiceManager,
     ) -> Result<()>
     where
         T: Transport + 'static,
     {
+        info!(self.logger, "server/raftkv2:NodeV2.start");
         let store_id = self.id();
         if let Some(region) = Bootstrap::new(
             &raft_engine,
@@ -133,10 +135,11 @@ where
             let ctx = TabletContext::new(&region, Some(RAFT_INIT_LOG_INDEX));
             // TODO: make follow line can recover from abort.
             registry.tablet_factory().open_tablet(ctx, &path).unwrap();
+            info!(self.logger, "server/raftkv2:NodeV2.start bootstrapped first region, {:?}", path; "region_id" => region.get_id());
         }
 
         // Put store only if the cluster is bootstrapped.
-        info!(self.logger, "put store to PD"; "store" => ?&self.store);
+        info!(self.logger, "server/raftkv2:NodeV2.start: put store to PD"; "store" => ?&self.store);
         let status = self.pd_client.put_store(self.store.clone())?;
         self.load_all_stores(state, status);
 
@@ -155,7 +158,7 @@ where
             pd_worker,
             store_cfg,
             sst_importer,
-            key_manager,
+            key_manager_map,
             grpc_service_mgr,
         )?;
 
@@ -187,7 +190,7 @@ where
         state: &Mutex<GlobalReplicationState>,
         status: Option<ReplicationStatus>,
     ) {
-        info!(self.logger, "initializing replication mode"; "status" => ?status, "store_id" => self.store.id);
+        info!(self.logger, "server/raftkv2:NodeV2.load_all_stores: initializing replication mode"; "status" => ?status, "store_id" => self.store.id);
         let stores = match self.pd_client.get_all_stores(false) {
             Ok(stores) => stores,
             Err(e) => panic!("failed to load all stores: {:?}", e),
@@ -219,14 +222,14 @@ where
         pd_worker: LazyWorker<PdTask>,
         store_cfg: Arc<VersionTrack<raftstore_v2::Config>>,
         sst_importer: Arc<SstImporter>,
-        key_manager: Option<Arc<DataKeyManager>>,
+        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
         grpc_service_mgr: GrpcServiceManager,
     ) -> Result<()>
     where
         T: Transport + 'static,
     {
         let store_id = self.store.get_id();
-        info!(self.logger, "start raft store thread"; "store_id" => store_id);
+        info!(self.logger, "server/raftkv2:NodeV2.start_store: start raft store thread "; "store_id" => store_id);
 
         if self.has_started {
             return Err(box_err!("{} is already started", store_id));
@@ -253,7 +256,7 @@ where
             background,
             pd_worker,
             sst_importer,
-            key_manager,
+            key_manager_map,
             grpc_service_mgr,
             self.resource_ctl.clone(),
         )?;

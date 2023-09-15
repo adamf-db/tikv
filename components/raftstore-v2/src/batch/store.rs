@@ -110,7 +110,8 @@ pub struct StoreContext<EK: KvEngine, ER: RaftEngine, T> {
     pub global_stat: GlobalStoreStat,
     pub store_stat: LocalStoreStat,
     pub sst_importer: Arc<SstImporter>,
-    pub key_manager: Option<Arc<DataKeyManager>>,
+    // ARE THESE PER REGION/PEER OR NOT?
+    pub key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
 
     /// Inspector for latency inspecting
     pub pending_latency_inspect: Vec<LatencyInspector>,
@@ -363,7 +364,7 @@ struct StorePollerBuilder<EK: KvEngine, ER: RaftEngine, T> {
     snap_mgr: TabletSnapManager,
     global_stat: GlobalStoreStat,
     sst_importer: Arc<SstImporter>,
-    key_manager: Option<Arc<DataKeyManager>>,
+    key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
     node_start_time: Timespec, // monotonic_raw_now
 }
 
@@ -383,7 +384,7 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
         snap_mgr: TabletSnapManager,
         coprocessor_host: CoprocessorHost<EK>,
         sst_importer: Arc<SstImporter>,
-        key_manager: Option<Arc<DataKeyManager>>,
+        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
         node_start_time: Timespec, // monotonic_raw_now
     ) -> Self {
         let pool_size = cfg.value().apply_batch_system.pool_size;
@@ -414,7 +415,7 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
             coprocessor_host,
             global_stat,
             sst_importer,
-            key_manager,
+            key_manager_map,
             node_start_time,
         }
     }
@@ -427,7 +428,7 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
         self.engine
             .for_each_raft_group::<Error, _>(&mut |region_id| {
                 assert_ne!(region_id, INVALID_ID);
-                info!(self.logger, "Initing all raft state machines for all regions, current region. Need a key manaber per region here!";
+                info!(self.logger, "raft_log_engine/engine:StorePollerBuilder.init: Initing all raft state machines for all regions, current region. Need a key manager per region here!";
                 "region_id" => region_id, "store_id" => self.store_id);
                 let storage = match Storage::new(
                     region_id,
@@ -447,12 +448,17 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
                         StateRole::Follower,
                     );
                 }
+                info!(self.logger, "raft_log_engine/engine:StorePollerBuilder.init: Setting region in the StoreMeta"; "region_id" => region_id);
                 meta.set_region(storage.region(), storage.is_initialized(), &self.logger);
+                info!(self.logger, "raft_log_engine/engine:StorePollerBuilder.init: Calling PeerFsm:new - GET THE RIGHT KEY MANAGER HERE");
 
+                let key_manager = &**self.key_manager_map.as_ref().unwrap().get(&storage.region().keyspace_id).unwrap();
+                    //.unwrap().as_deref();
                 let (sender, peer_fsm) = PeerFsm::new(
                     &cfg,
                     &self.tablet_registry,
-                    self.key_manager.as_deref(),
+                    Some(key_manager),
+                  //  self.key_manager.as_deref(),
                     &self.snap_mgr,
                     storage,
                 )?;
@@ -475,8 +481,10 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
 
     #[inline]
     fn remove_dir(&self, p: &Path) -> Result<()> {
-        if let Some(m) = &self.key_manager {
-            m.remove_dir(p, None)?;
+        if let Some(m) = self.key_manager_map.as_ref().unwrap().get(&0).cloned().as_deref() {
+        //if let Some(m) = self.key_manager) {
+
+                m.remove_dir(p, None)?;
         }
         file_system::remove_dir_all(p)?;
         Ok(())
@@ -535,6 +543,7 @@ where
     type Handler = StorePoller<EK, ER, T>;
 
     fn build(&mut self, _priority: batch_system::Priority) -> Self::Handler {
+        info!(self.logger, "raftstore-v2/batch/store:StorePollerBuilder.build");
         let cfg = self.cfg.value().clone();
         let election_timeout = cfg.raft_base_tick_interval.0
             * if cfg.raft_min_election_timeout_ticks != 0 {
@@ -569,7 +578,7 @@ where
             global_stat: self.global_stat.clone(),
             store_stat: self.global_stat.local(),
             sst_importer: self.sst_importer.clone(),
-            key_manager: self.key_manager.clone(),
+            key_manager_map: self.key_manager_map.clone(),
             pending_latency_inspect: vec![],
         };
         poll_ctx.update_ticks_timeout();
@@ -692,7 +701,7 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
         background: Worker,
         pd_worker: LazyWorker<pd::Task>,
         sst_importer: Arc<SstImporter>,
-        key_manager: Option<Arc<DataKeyManager>>,
+        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
         grpc_service_mgr: GrpcServiceManager,
         resource_ctl: Option<Arc<ResourceController>>,
     ) -> Result<()>
@@ -700,6 +709,7 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
         T: Transport + 'static,
         C: PdClient + 'static,
     {
+        info!(self.logger, "raftstore-v2/batch/store:StoreSystem.start"; "store_id" => store_id);
         let sync_router = Mutex::new(router.clone());
         pd_client.handle_reconnect(move || {
             sync_router
@@ -815,7 +825,7 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
             self.shutdown.clone(),
             cfg.clone(),
         )?);
-
+        info!(self.logger, "raftstore-v2/batch/store:StoreSystem.start starting split_check_scheduler"; "store_id" => store_id);
         let split_check_scheduler = workers.background.start(
             "split-check",
             SplitCheckRunner::with_registry(
@@ -824,6 +834,7 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
                 coprocessor_host.clone(),
             ),
         );
+        info!(self.logger, "raftstore-v2/batch/store:StoreSystem.start starting tablet_scheduler"; "store_id" => store_id);
 
         let tablet_scheduler = workers.tablet.start_with_timer(
             "tablet-worker",
@@ -853,6 +864,7 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
             refresh_config: refresh_config_scheduler,
         };
 
+        info!(self.logger, "raftstore-v2/batch/store:StoreSystem.start: About to build the StorePollerBuilder"; "store_id" => store_id);
         let builder = StorePollerBuilder::new(
             cfg.clone(),
             store_id,
@@ -868,7 +880,7 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
             snap_mgr,
             coprocessor_host,
             sst_importer,
-            key_manager,
+            key_manager_map,
             self.node_start_time,
         );
 
@@ -931,6 +943,8 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
                 .unwrap();
         }
         router.send_control(StoreMsg::Start).unwrap();
+        info!(self.logger, "raftstore-v2/batch/store:StoreSystem.start done!"; "store_id" => store_id);
+
         Ok(())
     }
 

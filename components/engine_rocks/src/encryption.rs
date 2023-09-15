@@ -8,6 +8,8 @@ use rocksdb::{
     DBEncryptionMethod, EncryptionKeyManager as DBEncryptionKeyManager,
     FileEncryptionInfo as DBFileEncryptionInfo,
 };
+use tikv_util::{info};
+
 
 use crate::{r2e, raw::Env};
 
@@ -16,6 +18,7 @@ pub(crate) fn get_env(
     base_env: Option<Arc<Env>>,
     key_manager: Option<Arc<DataKeyManager>>,
 ) -> engine_traits::Result<Arc<Env>> {
+    info!("get_env, key_manager is for keyspace id {:?}", key_manager.as_ref().unwrap().get_keyspace_id());
     let base_env = base_env.unwrap_or_else(|| Arc::new(Env::default()));
     if let Some(manager) = key_manager {
         Ok(Arc::new(
@@ -23,6 +26,7 @@ pub(crate) fn get_env(
                 .map_err(r2e)?,
         ))
     } else {
+        info!("XXXX couldn't get a key manager in get_env, using base_env!)");
         Ok(base_env)
     }
 }
