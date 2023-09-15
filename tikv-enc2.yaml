@@ -1,0 +1,33 @@
+panic-when-unexpected-key-or-data = true
+
+[storage]
+api-version = 2
+enable-ttl = true
+engine = "partitioned-raft-kv"
+
+[security.encryption]
+data-encryption-method = "aes128-ctr"
+#data-encryption-method = "aes256-ctr"
+#data-encryption-method = "sm4-ctr"
+data-key-rotation-period = "168h" # 7 days
+
+[security.encryption.master-key]
+type = "file"
+path = "/Users/adam.fletcher/mtenant/tikv/key"
+
+
+[[security.encryption.keyspace-keys]]
+keyspace-id = 1
+
+[security.encryption.keyspace-keys.key-config]
+type = 'file'
+path = "/Users/adam.fletcher/mtenant/tikv/key"
+#
+#
+[[security.encryption.keyspace-keys]]
+keyspace-id = 2
+#
+[security.encryption.keyspace-keys.key-config]
+type = 'file'
+path = "/Users/adam.fletcher/mtenant/tikv/key"
+
