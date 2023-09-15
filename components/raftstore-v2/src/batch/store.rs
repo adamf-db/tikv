@@ -18,7 +18,7 @@ use causal_ts::CausalTsProviderImpl;
 use collections::HashMap;
 use concurrency_manager::ConcurrencyManager;
 use crossbeam::channel::TrySendError;
-use encryption_export::DataKeyManager;
+use encryption_export::{DataKeyManager, DKMMap};
 use engine_traits::{KvEngine, RaftEngine, TabletRegistry};
 use file_system::{set_io_type, IoType, WithIoType};
 use futures::compat::Future01CompatExt;
@@ -111,7 +111,7 @@ pub struct StoreContext<EK: KvEngine, ER: RaftEngine, T> {
     pub store_stat: LocalStoreStat,
     pub sst_importer: Arc<SstImporter>,
     // ARE THESE PER REGION/PEER OR NOT?
-    pub key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
+    pub key_manager_map: DKMMap,
 
     /// Inspector for latency inspecting
     pub pending_latency_inspect: Vec<LatencyInspector>,
@@ -364,7 +364,7 @@ struct StorePollerBuilder<EK: KvEngine, ER: RaftEngine, T> {
     snap_mgr: TabletSnapManager,
     global_stat: GlobalStoreStat,
     sst_importer: Arc<SstImporter>,
-    key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
+    key_manager_map: DKMMap,
     node_start_time: Timespec, // monotonic_raw_now
 }
 
@@ -384,7 +384,7 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
         snap_mgr: TabletSnapManager,
         coprocessor_host: CoprocessorHost<EK>,
         sst_importer: Arc<SstImporter>,
-        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
+        key_manager_map: DKMMap,
         node_start_time: Timespec, // monotonic_raw_now
     ) -> Self {
         let pool_size = cfg.value().apply_batch_system.pool_size;
@@ -452,12 +452,12 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
                 meta.set_region(storage.region(), storage.is_initialized(), &self.logger);
                 info!(self.logger, "raft_log_engine/engine:StorePollerBuilder.init: Calling PeerFsm:new - GET THE RIGHT KEY MANAGER HERE");
 
-                let key_manager = &**self.key_manager_map.as_ref().unwrap().get(&storage.region().keyspace_id).unwrap();
+                let key_manager = self.key_manager_map.get(&storage.region().keyspace_id).unwrap();
                     //.unwrap().as_deref();
                 let (sender, peer_fsm) = PeerFsm::new(
                     &cfg,
                     &self.tablet_registry,
-                    Some(key_manager),
+                    Some(&*key_manager),
                   //  self.key_manager.as_deref(),
                     &self.snap_mgr,
                     storage,
@@ -481,7 +481,8 @@ impl<EK: KvEngine, ER: RaftEngine, T> StorePollerBuilder<EK, ER, T> {
 
     #[inline]
     fn remove_dir(&self, p: &Path) -> Result<()> {
-        if let Some(m) = self.key_manager_map.as_ref().unwrap().get(&0).cloned().as_deref() {
+        info!(self.logger, "HEY CHECK KEYSPACE_ID HERE");
+        if let Some(m) = self.key_manager_map.get(&0) {
         //if let Some(m) = self.key_manager) {
 
                 m.remove_dir(p, None)?;
@@ -701,7 +702,7 @@ impl<EK: KvEngine, ER: RaftEngine> StoreSystem<EK, ER> {
         background: Worker,
         pd_worker: LazyWorker<pd::Task>,
         sst_importer: Arc<SstImporter>,
-        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
+        key_manager_map: DKMMap,
         grpc_service_mgr: GrpcServiceManager,
         resource_ctl: Option<Arc<ResourceController>>,
     ) -> Result<()>

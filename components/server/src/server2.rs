@@ -119,6 +119,7 @@ use tikv_util::{
     Either,
 };
 use tokio::runtime::Builder;
+use encryption::{DataKeyManager, DKMMap};
 
 use crate::{
     common::{ConfiguredRaftEngine, EngineMetricsManager, EnginesResourceInfo, TikvServerCore},
@@ -382,7 +383,7 @@ where
                 store_path,
                 lock_files: vec![],
                 encryption_key_manager: None,
-                encryption_key_manager_map: None,
+                encryption_key_manager_map: DKMMap::new(HashMap::default()),
                 flow_info_sender: None,
                 flow_info_receiver: None,
                 to_stop: vec![],
@@ -1461,7 +1462,7 @@ impl<CER: ConfiguredRaftEngine> TikvServer<CER> {
             .core
             .config
             .build_shared_rocks_env(
-                self.core.encryption_key_manager_map.as_ref().unwrap().get(&0).cloned(),
+                self.core.encryption_key_manager_map.get(&0),
                 get_io_rate_limiter(),
             )
             .unwrap();
@@ -1472,7 +1473,7 @@ impl<CER: ConfiguredRaftEngine> TikvServer<CER> {
             &env,
             &self.core.encryption_key_manager,
             &block_cache,
-            &self.core.encryption_key_manager_map,
+            self.core.encryption_key_manager_map.clone(),
         );
         self.raft_statistics = raft_statistics;
 
@@ -1482,7 +1483,7 @@ impl<CER: ConfiguredRaftEngine> TikvServer<CER> {
             env,
             &self.core.config,
             block_cache,
-            self.core.encryption_key_manager_map.as_ref(),
+            self.core.encryption_key_manager_map.clone(),
         )
         .sst_recovery_sender(self.init_sst_recovery_sender())
         .flow_listener(flow_listener);

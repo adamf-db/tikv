@@ -85,7 +85,7 @@ pub fn new_engine_opt(
             None => Arc::new(Env::default()),
         };
         // panic if OPTIONS not found for existing instance?
-        info!("engine_rocks/util:new_engine_opt call load_latest_options for path {:}: JUST WRITE HTE CODE EHERE", path );
+        info!("engine_rocks/util:new_engine_opt call load_latest_options for path {:}", path );
 
         let (_, tmp) = load_latest_options(path, &env, true)
             .unwrap_or_else(|e| panic!("failed to load_latest_options {:?} - {:?}", e, path))

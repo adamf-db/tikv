@@ -97,10 +97,10 @@ pub fn new_debug_executor(
 
     let cache = cfg.storage.block_cache.build_shared_cache();
     let env = cfg
-        .build_shared_rocks_env(key_manager_map.as_ref().unwrap().get(&0).cloned(), None /* io_rate_limiter */)
+        .build_shared_rocks_env(key_manager_map.get(&0), None /* io_rate_limiter */)
         .unwrap();
 
-    let factory = KvEngineFactoryBuilder::new(env.clone(), cfg, cache, key_manager_map.as_ref())
+    let factory = KvEngineFactoryBuilder::new(env.clone(), cfg, cache, key_manager_map.clone())
         .lite(true)
         .build();
 
@@ -135,7 +135,7 @@ pub fn new_debug_executor(
             error!("raft engine not exists: {}", config.dir);
             tikv_util::logger::exit_process_gracefully(-1);
         }
-        let raft_db = RaftLogEngine::new(config, key_manager_map.as_ref().unwrap().get(&0).cloned(), None /* io_rate_limiter */).unwrap();
+        let raft_db = RaftLogEngine::new(config, key_manager_map.get(&0), None /* io_rate_limiter */).unwrap();
         match engine_type {
             EngineType::RaftKv => {
                 let kv_db = match factory.create_shared_db(data_dir) {

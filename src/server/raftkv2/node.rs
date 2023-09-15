@@ -5,7 +5,7 @@ use collections::HashMap;
 
 use causal_ts::CausalTsProviderImpl;
 use concurrency_manager::ConcurrencyManager;
-use encryption_export::DataKeyManager;
+use encryption_export::{DataKeyManager, DKMMap};
 use engine_traits::{KvEngine, RaftEngine, TabletContext, TabletRegistry};
 use kvproto::{metapb, replication_modepb::ReplicationStatus};
 use pd_client::PdClient;
@@ -115,7 +115,7 @@ where
         store_cfg: Arc<VersionTrack<raftstore_v2::Config>>,
         state: &Mutex<GlobalReplicationState>,
         sst_importer: Arc<SstImporter>,
-        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
+        key_manager_map: DKMMap,
         grpc_service_mgr: GrpcServiceManager,
     ) -> Result<()>
     where
@@ -222,7 +222,7 @@ where
         pd_worker: LazyWorker<PdTask>,
         store_cfg: Arc<VersionTrack<raftstore_v2::Config>>,
         sst_importer: Arc<SstImporter>,
-        key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
+        key_manager_map: DKMMap,
         grpc_service_mgr: GrpcServiceManager,
     ) -> Result<()>
     where

@@ -1297,9 +1297,9 @@ fn read_cluster_id(config: &TikvConfig) -> Result<u64, String> {
     let key_manager_map =
         data_key_manager_map_from_config(&config.security.encryption, &config.storage.data_dir)
             .unwrap();
-    let env = get_env(key_manager_map.as_ref().unwrap().get(&0).cloned(), None /* io_rate_limiter */).unwrap();
+    let env = get_env(key_manager_map.get(&0), None /* io_rate_limiter */).unwrap();
     let cache = config.storage.block_cache.build_shared_cache();
-    let kv_engine = KvEngineFactoryBuilder::new(env, config, cache, key_manager_map.as_ref())
+    let kv_engine = KvEngineFactoryBuilder::new(env, config, cache, key_manager_map)
         .build()
         .create_shared_db(&config.storage.data_dir)
         .map_err(|e| format!("create_shared_db fail: {}", e))?;

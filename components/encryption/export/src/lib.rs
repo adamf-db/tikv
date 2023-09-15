@@ -1,6 +1,6 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 use std::path::Path;
-use collections::HashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::fs::create_dir_all;
 
@@ -13,7 +13,7 @@ use cloud::kms::Config as CloudConfig;
 pub use encryption::KmsBackend;
 pub use encryption::{
     clean_up_dir, clean_up_trash, from_engine_encryption_method, trash_dir_all, AzureConfig,
-    Backend, DataKeyImporter, DataKeyManager, DataKeyManagerArgs, DecrypterReader,
+    Backend, DataKeyImporter, DataKeyManager, DKMMap, DataKeyManagerArgs, DecrypterReader,
     EncryptionConfig, Error, FileConfig, Iv, KmsConfig, MasterKeyConfig, Result,
 };
 use encryption::{cloud_convert_error, FileBackend, PlaintextBackend};
@@ -37,7 +37,7 @@ pub fn data_key_manager_from_config(
 pub fn data_key_manager_map_from_config(
     config: &EncryptionConfig,
     dict_path: &str,
-) -> Result<Option<HashMap<u32, Arc<DataKeyManager>>>> {
+) -> Result<DKMMap> {
     info!("MAP VERSION OF DKM LOADER: Loading data key manager from config...");
     let master_key = create_backend(&config.master_key).map_err(|e| {
         error!("failed to access master key, {}", e);
@@ -52,15 +52,13 @@ pub fn data_key_manager_map_from_config(
     let args = DataKeyManagerArgs::from_encryption_config(&file_dict_path, config);
     let previous_master_key_conf = config.previous_master_key.clone();
     let previous_master_key = Box::new(move || create_backend(&previous_master_key_conf));
-    let mut dkm_map: HashMap<u32, Arc<DataKeyManager>> = HashMap::default();
+    let mut dkm_map = HashMap::new();
 
 
     // master_key will have a keyspace_id of 0.
-    let data_key_manager = match DataKeyManager::new(master_key, previous_master_key, 0, args.clone())
-        .unwrap() {
-        None => return Ok(None),
-        Some(data_key_manager) => data_key_manager,
-    };
+    let data_key_manager = DataKeyManager::new(master_key, previous_master_key, 0, args.clone())
+        .unwrap().unwrap();
+
     dkm_map.insert(0, Arc::new(data_key_manager));
     for keyspace_config in &config.keyspace_keys {
         let keyspace_key = create_backend(&keyspace_config.key_config).map_err(|e| {
@@ -80,7 +78,8 @@ pub fn data_key_manager_map_from_config(
     }
 
     info!("dkm_map len"; "dkm_map_len" => dkm_map.len());
-    Ok(Option::from(dkm_map))
+    let dkmm = DKMMap::new(dkm_map);
+    Ok(dkmm)
 }
 
 

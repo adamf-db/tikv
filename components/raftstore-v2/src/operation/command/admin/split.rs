@@ -471,7 +471,7 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
 
         info!(
             self.logger,
-            "raftstore-v2/operation/command/admin:Apply.apply_batch_split: split region with keyspace_id";
+            "raftstore-v2/operation/command/admin/split:Apply.apply_batch_split: split region with keyspace_id";
             "region" => ?region,
             "index" => log_index,
             "boundaries" => %KeysInfoFormatter(boundaries.iter()),
@@ -539,7 +539,7 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
         let (tx, rx) = oneshot::channel();
         let tablet = self.tablet().clone();
         let logger = self.logger.clone();
-        info!(logger, "raftstore-v2/operation/command/admin:Apply.split, tablet: {:?}", tablet);
+        info!(logger, "raftstore-v2/operation/command/admin/split/:Apply.split, tablet: {:?}", tablet);
 
         let tablet_registry = self.tablet_registry().clone();
         self.high_priority_pool()
@@ -554,10 +554,10 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
                     )
                 });
 
-                info!(logger, "raftstore-v2/operation/command/admin:Apply.split: need to get keyspace ids on the temp split path stuff");
+                info!(logger, "raftstore-v2/operation/command/admin/split:Apply.split: need to get keyspace ids on the temp split path stuff");
                 for id in split_region_ids {
                     let split_temp_path = temp_split_path(&tablet_registry, id);
-                    info!(logger, "raftstore-v2/operation/command/admin:Apply.split: temp split path: {:?}", split_temp_path;
+                    info!(logger, "raftstore-v2/operation/command/admin/split:Apply.split: temp split path: {:?}", split_temp_path;
                         "region_id" => region_id, "split_region_id" => id);
                     checkpointer
                         .create_at(&split_temp_path, None, 0)
@@ -604,7 +604,7 @@ impl<EK: KvEngine, R: ApplyResReporter> Apply<EK, R> {
         // to be removed after when it's stable
         info!(
             self.logger,
-            "raftstore-v2/operation/command/admin:Apply.split: checkpoint done and resume batch split execution";
+            "raftstore-v2/operation/command/admin/split:Apply.split: checkpoint done and resume batch split execution";
             "region" =>  ?self.region(),
             "checkpoint_duration" => ?checkpoint_duration,
             "total_duration" => ?elapsed,

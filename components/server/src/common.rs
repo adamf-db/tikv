@@ -28,6 +28,7 @@ use engine_traits::{
 use error_code::ErrorCodeExt;
 use file_system::{get_io_rate_limiter, set_io_rate_limiter, BytesFetcher, File, IoBudgetAdjustor};
 use grpcio::Environment;
+use encryption::DKMMap;
 use pd_client::{PdClient, RpcClient};
 use raft_log_engine::RaftLogEngine;
 use security::SecurityManager;
@@ -73,7 +74,7 @@ pub struct TikvServerCore {
     pub store_path: PathBuf,
     pub lock_files: Vec<File>,
     pub encryption_key_manager: Option<Arc<DataKeyManager>>,
-    pub encryption_key_manager_map: Option<collections::HashMap<u32, Arc<DataKeyManager>>>,
+    pub encryption_key_manager_map: DKMMap,
     pub flow_info_sender: Option<mpsc::Sender<FlowInfo>>,
     pub flow_info_receiver: Option<mpsc::Receiver<FlowInfo>>,
     pub to_stop: Vec<Box<dyn Stop>>,
@@ -717,7 +718,7 @@ pub trait ConfiguredRaftEngine: RaftEngine {
         _: &Arc<Env>,
         _: &Option<Arc<DataKeyManager>>,
         _: &Cache,
-        _: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>
+        _: DKMMap,
     ) -> (Self, Option<Arc<RocksStatistics>>);
     fn as_rocks_engine(&self) -> Option<&RocksEngine>;
     fn register_config(&self, _cfg_controller: &mut ConfigController);
@@ -729,7 +730,7 @@ impl<T: RaftEngine> ConfiguredRaftEngine for T {
         _: &Arc<Env>,
         _: &Option<Arc<DataKeyManager>>,
         _: &Cache,
-        _: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>
+        _: DKMMap
     ) -> (Self, Option<Arc<RocksStatistics>>) {
         unimplemented!()
     }
@@ -745,7 +746,7 @@ impl ConfiguredRaftEngine for RocksEngine {
         env: &Arc<Env>,
         key_manager: &Option<Arc<DataKeyManager>>,
         block_cache: &Cache,
-        _: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>
+        key_manager_map: DKMMap,
     ) -> (Self, Option<Arc<RocksStatistics>>) {
         info!("impl ConfiguredRaftEngine for RocksEngine");
         let mut raft_data_state_machine = RaftDataStateMachine::new(
@@ -797,7 +798,7 @@ impl ConfiguredRaftEngine for RaftLogEngine {
         env: &Arc<Env>,
         _: &Option<Arc<DataKeyManager>>,
         block_cache: &Cache,
-        multi_key_manager: &Option<collections::HashMap<u32, Arc<DataKeyManager>>>,
+        multi_key_manager: DKMMap,
     ) -> (Self, Option<Arc<RocksStatistics>>) {
         info!("impl ConfiguredRaftEngine for RAFTEngine");
         let mut raft_data_state_machine = RaftDataStateMachine::new(
@@ -811,7 +812,7 @@ impl ConfiguredRaftEngine for RaftLogEngine {
         // XXX probably should be be `unwrap_or_else(.., None)`
         let raft_engine =
             RaftLogEngine::new(raft_config,
-                               multi_key_manager.as_ref().unwrap().get(&0).cloned(), get_io_rate_limiter())
+                               multi_key_manager.get(&0), get_io_rate_limiter())
                 .expect("failed to open raft engine");
 
         if should_dump {

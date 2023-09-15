@@ -479,7 +479,7 @@ impl Store {
             PeerFsm::new(
                 &ctx.cfg,
                 &ctx.tablet_registry,
-                Some(&**ctx.key_manager_map.as_ref().unwrap().get(&s.region().keyspace_id).unwrap()),
+                Some(&*ctx.key_manager_map.get(&s.region().keyspace_id).unwrap()),
                 &ctx.snap_mgr,
                 s,
             )

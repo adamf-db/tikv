@@ -11,6 +11,7 @@ use std::{
     thread::JoinHandle,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use std::collections::HashMap;
 
 use crossbeam::channel::{self, select, tick};
 use engine_traits::{
@@ -36,6 +37,23 @@ const KEY_DICT_NAME: &str = "key.dict";
 const FILE_DICT_NAME: &str = "file.dict";
 const ROTATE_CHECK_PERIOD: u64 = 600; // 10min
 const GENERATE_DATA_KEY_LIMIT: usize = 10;
+
+#[derive(Clone)]
+pub struct DKMMap {
+    key_manager_map: Arc<HashMap<u32, Arc<DataKeyManager>>>,
+}
+
+impl DKMMap {
+    pub fn new(key_manager_map: HashMap<u32, Arc<DataKeyManager>>) -> Self {
+        Self {
+            key_manager_map: Arc::new( key_manager_map)
+        }
+    }
+    pub fn get(&self, keyspace_id: &u32) -> Option<Arc<DataKeyManager>> {
+        self.key_manager_map.get(keyspace_id).map(|dkm_arc| dkm_arc.clone())
+    }
+}
+
 
 #[derive(Debug)]
 pub struct Dicts {

@@ -2,7 +2,7 @@
 
 use std::{path::Path, sync::Arc};
 
-use encryption_export::DataKeyManager;
+use encryption_export::{DataKeyManager, DKMMap};
 use engine_rocks::{
     raw::{Cache, Env},
     util::RangeCompactionFilterFactory,
@@ -31,7 +31,7 @@ struct FactoryInner {
     api_version: ApiVersion,
     flow_listener: Option<engine_rocks::FlowListener>,
     sst_recovery_sender: Option<Scheduler<String>>,
-    encryption_key_manager_map: Option<HashMap<u32, Arc<DataKeyManager>>>,
+    encryption_key_manager_map: DKMMap,
     db_resources: DbResources,
     cf_resources: CfResources,
     state_storage: Option<Arc<dyn StateStorage>>,
@@ -48,7 +48,7 @@ impl KvEngineFactoryBuilder {
         env: Arc<Env>,
         config: &TikvConfig,
         cache: Cache,
-        key_manager_map: Option<&HashMap<u32, Arc<DataKeyManager>>>,
+        key_manager_map: DKMMap,
     ) -> Self {
         Self {
             inner: FactoryInner {
@@ -57,7 +57,7 @@ impl KvEngineFactoryBuilder {
                 api_version: config.storage.api_version(),
                 flow_listener: None,
                 sst_recovery_sender: None,
-                encryption_key_manager_map: key_manager_map.clone().cloned(),
+                encryption_key_manager_map: key_manager_map,
                 db_resources: config.rocksdb.build_resources(env),
                 cf_resources: config.rocksdb.build_cf_resources(cache),
                 state_storage: None,
@@ -249,10 +249,10 @@ impl TabletFactory<RocksEngine> for KvEngineFactory {
 
         // TODO: using the id, which is usually the region id, get the correct encryption_key_manager
         let keyspace_id = 0;
+        let trash_dkm = self.inner.encryption_key_manager_map.get(&keyspace_id).unwrap();
         let _ =
             encryption_export::trash_dir_all(path,
-                                             self.inner.encryption_key_manager_map.as_ref()
-                                                 .unwrap().get(&keyspace_id).cloned().as_deref());
+                                             Some(&*trash_dkm));
         if let Some(listener) = &self.inner.flow_listener {
             listener.clone_with(ctx.id).on_destroyed();
         }
