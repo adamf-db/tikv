@@ -605,7 +605,9 @@ where
             .to_owned();
 
         let snap_mgr =
-            match TabletSnapManager::new(&snap_path, self.core.encryption_key_manager.clone()) {
+            match TabletSnapManager::new(
+                &snap_path,
+                self.core.encryption_key_manager_map.get(&0).clone()) {
                 Ok(mgr) => mgr,
                 Err(e) => fatal!("failed to create snapshot manager at {}: {}", snap_path, e),
             };
